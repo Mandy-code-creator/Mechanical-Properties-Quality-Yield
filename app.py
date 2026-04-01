@@ -345,6 +345,86 @@ if uploaded_file is not None:
                     fig.tight_layout()
                     st.pyplot(fig); plt.close(fig)
                     st.markdown("---")
+    # --- TASK 5: I-MR CHART (TIMELINE STABILITY) ---
+    with tab5:
+        st.header("📈 Task 5: I-MR Stability Tracking (Chronological)")
+        st.info("Analysis based on production date from 2024 to 2026. Red dots = Out of Spec.")
+
+        # Filters for Task 5
+        imr_thicks = sorted(df_filtered['Actual_Thickness'].dropna().unique())
+        imr_mats = sorted(df_filtered['HR_Material'].astype(str).unique())
+        
+        c1, c2 = st.columns(2)
+        sel_t = c1.selectbox("Filter Thickness:", imr_thicks, key="t5_t")
+        sel_m = c2.selectbox("Filter Material:", imr_mats, key="t5_m")
+
+        imr_df = df_filtered[(df_filtered['Actual_Thickness'] == sel_t) & 
+                            (df_filtered['HR_Material'] == sel_m)].sort_values(by='烤三生產日期').reset_index(drop=True)
+
+        if not imr_df.empty:
+            for feat in ['YS', 'TS', 'EL', 'YPE']:
+                if feat in imr_df.columns:
+                    valid_data = imr_df.dropna(subset=[feat, '烤三生產日期']).copy()
+                    if len(valid_data) > 1:
+                        st.markdown(f"### 🛡️ Chronological Stability: **{feat}**")
+                        dates, vals = valid_data['烤三生產日期'], valid_data[feat].values
+                        mean_v = np.mean(vals)
+                        
+                        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 8), gridspec_kw={'height_ratios': [2, 1]})
+                        
+                        # I-Chart
+                        ax1.plot(dates, vals, marker='o', ms=4, lw=1, color='#1f77b4', alpha=0.6, label=feat)
+                        ax1.axhline(mean_v, color='green', ls='--', label='Mean')
+                        
+                        # Add Global Specs & Highlights
+                        if feat in GLOBAL_SPECS:
+                            s = GLOBAL_SPECS[feat]
+                            if s['min']: ax1.axhline(s['min'], color='red', lw=2, label=f"Min ({s['min']})")
+                            if s['max']: ax1.axhline(s['max'], color='red', lw=2, label=f"Max ({s['max']})")
+                            if s['target']: ax1.axhline(s['target'], color='black', ls=':', label='Target')
+                            
+                            # Violation Detection
+                            v_x, v_y = [], []
+                            for i, v in enumerate(vals):
+                                if (s['min'] and v < s['min']) or (s['max'] and v > s['max']):
+                                    v_x.append(dates.iloc[i]); v_y.append(v)
+                            if v_x: ax1.scatter(v_x, v_y, color='red', s=60, zorder=5, label='Violation')
+                        
+                        # Year Separation Lines
+                        for year in dates.dt.year.unique():
+                            y_start = pd.Timestamp(year=year, month=1, day=1)
+                            if dates.min() <= y_start <= dates.max():
+                                ax1.axvline(y_start, color='black', ls='-.', alpha=0.3)
+                                ax1.text(y_start, ax1.get_ylim()[1], f" {year}", fontsize=10, va='top')
+
+                        ax1.set_title(f"Individual Chart (I) - {feat}", fontweight='bold')
+                        ax1.legend(loc='upper right', fontsize=8)
+
+                        # MR-Chart
+                        mr = np.abs(np.diff(vals))
+                        mr_mean = np.mean(mr)
+                        ucl_mr = 3.267 * mr_mean
+                        ax2.plot(dates.iloc[1:], mr, marker='o', ms=3, color='orange', alpha=0.6)
+                        ax2.axhline(mr_mean, color='green', ls='--')
+                        ax2.axhline(ucl_mr, color='red', ls=':', label=f'UCL ({ucl_mr:.1f})')
+                        
+                        # High variation points
+                        hv_x, hv_y = [], []
+                        for i, m_val in enumerate(mr):
+                            if m_val > ucl_mr: hv_x.append(dates.iloc[i+1]); hv_y.append(m_val)
+                        if hv_x: ax2.scatter(hv_x, hv_y, color='red', s=40, zorder=5)
+
+                        ax2.set_title("Moving Range Chart (MR)", fontweight='bold')
+                        fig.autofmt_xdate()
+                        st.pyplot(fig); plt.close(fig)
+                        
+                        # Insight
+                        if v_x:
+                            st.error(f"⚠️ **Stability Insight:** Found {len(v_x)} out-of-spec points for {feat}. Check production logs around these dates.")
+                        else:
+                            st.success(f"✅ **Stability Insight:** {feat} is within specification limits for this period.")
+        else:
+            st.warning("No data found for the selected combination.")                
     # --- EXPORT SECTION ---
     # (Giữ nguyên logic Export ban đầu của bạn...)
     st.sidebar.header("📥 Export Options")
