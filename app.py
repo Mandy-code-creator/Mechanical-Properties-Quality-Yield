@@ -345,9 +345,9 @@ if uploaded_file is not None:
                     fig.tight_layout()
                     st.pyplot(fig); plt.close(fig)
                     st.markdown("---")
-    # --- TASK 5: I-MR CHART (TIMELINE STABILITY) ---
+    # --- TASK 4: I-MR CHART (TIMELINE STABILITY) ---
     with tab5:
-        st.header("📈 Task 5: I-MR Stability Tracking (Chronological)")
+        st.header("📈 Task 4: I-MR Stability Tracking (Chronological)")
         st.info("Analysis based on production date from 2024 to 2026. Red dots = Out of Spec.")
 
         # Filters for Task 5
