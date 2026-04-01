@@ -123,11 +123,18 @@ if uploaded_file is not None:
             
             st.error(f"⚠️ **Executive Insight:** The highest risk item is **{worst_row['Actual_Thickness']}mm ({worst_row['HR_Material']})** during **{worst_row['Time_Group']}**, hitting a defect rate of **{worst_row['Defect_Rate (%)']}%** ({worst_row['Bad_Qty']} defective coils).")
             
-            # Hiển thị bảng với màu sắc Gradient nổi bật
+            # Hiển thị bảng với màu sắc Gradient nổi bật (ĐÃ FORMAT BỎ SỐ 0 THẬP PHÂN)
             st.dataframe(
                 period_summary.style.background_gradient(subset=['Defect_Rate (%)'], cmap='Reds')
                                     .background_gradient(subset=['Yield (%)'], cmap='Greens')
-                                    .format({'Yield (%)': '{:.2f}%', 'Defect_Rate (%)': '{:.2f}%'}),
+                                    .format({
+                                        'Actual_Thickness': '{:.2f}', # Hiển thị độ dày gọn gàng (VD: 0.75, 0.60)
+                                        'Total_Qty': '{:.0f}',        # Chuyển thành số nguyên (VD: 2)
+                                        'Good_Qty': '{:.0f}',         # Chuyển thành số nguyên (VD: 0)
+                                        'Bad_Qty': '{:.0f}',          # Chuyển thành số nguyên (VD: 2)
+                                        'Yield (%)': '{:.2f}%', 
+                                        'Defect_Rate (%)': '{:.2f}%'
+                                    }),
                 use_container_width=True, 
                 hide_index=True
             )
