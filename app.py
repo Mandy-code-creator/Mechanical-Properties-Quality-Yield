@@ -1,13 +1,13 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
-import seaborn as sns
 import numpy as np
+import io
 from matplotlib.patches import Patch
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Quality Dashboard", layout="wide")
-st.title("📊 Production Quality Yield & Period Comparison")
+st.title("📊 Production Quality Yield & Distribution")
 st.markdown("---")
 
 uploaded_file = st.file_uploader("Upload Excel data (.xlsx)", type=["xlsx"])
@@ -17,6 +17,7 @@ if uploaded_file is not None:
     df.columns = df.columns.astype(str).str.strip()
 
     # --- 1. DATA EXTRACTION ---
+    # Prioritize 'Thickness' column, then try coordinate-based search
     if 'Thickness' in df.columns:
         df.rename(columns={'Thickness': 'Actual_Thickness'}, inplace=True)
     else:
@@ -65,24 +66,73 @@ if uploaded_file is not None:
     if '烤三生產日期' in df.columns:
         df['Time_Group'] = df['烤三生產日期'].apply(categorize_period)
         df = df[df['Time_Group'] != "Other"]
+        # Duplicate data for 2025 Full Year view
+        df_25 = df[df['烤三生產日期'].dt.year == 2025].copy()
+        if not df_25.empty:
+            df_25['Time_Group'] = "2025 (Full Year)"
+            df = pd.concat([df, df_25], ignore_index=True)
     else:
         df['Time_Group'] = "Unknown"
 
-    tab0, tab1, tab2, tab3 = st.tabs(["0. Raw Check", "1. Yield Summary", "2. Distribution", "3. Period Comparison"])
+    tab0, tab1, tab2 = st.tabs(["0. Raw Check", "1. Yield Summary", "2. Distribution Analysis"])
 
     with tab0:
         st.header("0. System Health Check")
-        st.write(f"**Valid Rows:** {len(df)}")
-        st.dataframe(df.head(5), use_container_width=True)
+        st.write(f"**Total Valid Rows Loaded:** {len(df)}")
+        st.dataframe(df.head(10), use_container_width=True)
 
     # --- GLOBAL FILTERING ---
+    # Only keep the 4 standard thicknesses as per previous request
     df = df[df['Actual_Thickness'].isin([0.5, 0.6, 0.75, 0.8])]
-    st.sidebar.header("🔎 Filters")
+    
+    st.sidebar.header("🔎 Dashboard Filters")
     all_periods = sorted(df['Time_Group'].unique())
     ui_selection = st.sidebar.multiselect("📅 Select Period(s):", options=["All"] + all_periods, default=["All"])
     selected_periods = all_periods if ("All" in ui_selection or not ui_selection) else ui_selection
     df_filtered = df[df['Time_Group'].isin(selected_periods)]
     thickness_list = sorted(df['Actual_Thickness'].dropna().unique())
+
+    # --- PLOT SETTINGS ---
+    global_x_bounds = {}
+    for feat in mech_features:
+        if feat in df.columns:
+            vd = df[[feat, 'Total_Qty']].dropna().copy()
+            vd = vd[vd['Total_Qty'] > 0]
+            if not vd.empty:
+                q1, q99 = np.percentile(vd[feat], 1), np.percentile(vd[feat], 99)
+                global_x_bounds[feat] = (q1 - (q99-q1)*0.25, q99 + (q99-q1)*0.25)
+
+    def get_shared_y(data, features):
+        max_y = 0
+        for feat in features:
+            if feat in data.columns:
+                vd = data.dropna(subset=[feat])
+                if not vd.empty:
+                    fmin, fmax = global_x_bounds.get(feat, (vd[feat].min(), vd[feat].max()))
+                    cnts, _ = np.histogram(vd[feat], bins=np.linspace(fmin, fmax, 16), weights=vd['Total_Qty'])
+                    max_y = max(max_y, cnts.max())
+        return max_y * 1.35 if max_y > 0 else 50
+
+    def plot_dist(ax, data, feat, title, y_lim):
+        c_map = {'A-B+': '#2ca02c', 'A-B': '#1f77b4', 'A-B-': '#ff7f0e', 'B+': '#9467bd', 'B': '#d62728'}
+        fmin, fmax = global_x_bounds.get(feat, (data[feat].min(), data[feat].max()))
+        v_l, w_l, clrs, m_info = [], [], [], []
+        for g in base_grades:
+            td = data[[feat, g]].dropna()
+            td = td[td[g] > 0]
+            if not td.empty:
+                v_l.append(td[feat].values); w_l.append(td[g].values); clrs.append(c_map[g])
+                m = np.average(td[feat].values, weights=td[g].values)
+                ax.axvline(m, color=c_map[g], ls='--', lw=1.2)
+                m_info.append({'v': m, 'c': c_map[g]})
+        if v_l:
+            ax.hist(v_l, bins=np.linspace(fmin, fmax, 16), weights=w_l, color=clrs, stacked=True, edgecolor='white', alpha=0.7)
+            m_info.sort(key=lambda x: x['v'])
+            for i, info in enumerate(m_info):
+                h = y_lim * (0.85 - (i % 3) * 0.12)
+                ax.text(info['v'], h, f"{info['v']:.1f}", color='white', fontweight='bold', fontsize=8, ha='center', bbox=dict(facecolor=info['c'], alpha=0.8, boxstyle='round,pad=0.2'))
+        ax.legend(handles=[Patch(facecolor=c_map[g], label=g) for g in base_grades if g in data.columns], loc='upper right', fontsize=7)
+        ax.set_xlim(fmin, fmax); ax.set_ylim(0, y_lim); ax.set_title(title, fontsize=10, fontweight='bold')
 
     # --- TAB 1: YIELD ---
     with tab1:
@@ -99,30 +149,36 @@ if uploaded_file is not None:
                 st.markdown(f"### 📅 Period: **{period}**")
                 st.dataframe(p_data.drop(columns=['Period']), use_container_width=True, hide_index=True)
 
-    # --- TAB 2: DISTRIBUTION (Old logic) ---
-    def plot_dist(ax, data, feat, title, y_lim):
-        c_map = {'A-B+': '#2ca02c', 'A-B': '#1f77b4', 'A-B-': '#ff7f0e', 'B+': '#9467bd', 'B': '#d62728'}
-        v_l, w_l, clrs = [], [], []
-        for g in base_grades:
-            td = data[[feat, g]].dropna()
-            if not td[td[g] > 0].empty:
-                v_l.append(td[feat].values); w_l.append(td[g].values); clrs.append(c_map[g])
-        if v_l:
-            ax.hist(v_l, bins=15, weights=w_l, color=clrs, stacked=True, edgecolor='white', alpha=0.7)
-        ax.set_title(title, fontsize=10, fontweight='bold')
-
+    # --- TAB 2: DISTRIBUTION ---
     with tab2:
-        st.header("2. Detailed Distribution Analysis")
+        st.header("2. Distribution Analysis")
         for period in selected_periods:
             df_p = df_filtered[df_filtered['Time_Group'] == period]
             if df_p.empty: continue
-            st.markdown(f"### 📅 Period: **{period}**")
+            st.markdown(f"## 📅 Period: **{period}**")
+            
+            # Overall for the period
+            ov_y = get_shared_y(df_p, ['YS', 'TS', 'EL', 'YPE'])
             cols = st.columns(2)
-            for idx, f in enumerate([x for x in ['YS', 'TS', 'EL'] if x in df_p.columns]):
+            for idx, f in enumerate([x for x in ['YS', 'TS', 'EL', 'YPE'] if x in df_p.columns]):
                 with cols[idx%2]:
-                    fig, ax = plt.subplots(figsize=(8, 4))
-                    plot_dist(ax, df_p, f, f"{f} distribution", 100)
+                    fig, ax = plt.subplots(figsize=(8, 4.5))
+                    plot_dist(ax, df_p, f, f"{f} (Overall)", ov_y)
                     st.pyplot(fig); plt.close(fig)
+            
+            # Detailed by Thickness
+            for thick in thickness_list:
+                df_t = df_p[df_p['Actual_Thickness'] == thick]
+                if df_t.empty: continue
+                st.markdown(f"**📏 Thickness: {thick}**")
+                ly = get_shared_y(df_t, ['YS', 'TS', 'EL', 'YPE'])
+                tcols = st.columns(2)
+                for idx, f in enumerate([x for x in ['YS', 'TS', 'EL', 'YPE'] if x in df_t.columns]):
+                    with tcols[idx%2]:
+                        fig, ax = plt.subplots(figsize=(8, 4.5))
+                        plot_dist(ax, df_t, f, f"{f} (Thick: {thick})", ly)
+                        st.pyplot(fig); plt.close(fig)
+            st.markdown("---")
 
     # --- TAB 3: SIDE-BY-SIDE COMPARISON (NEW) ---
     with tab3:
