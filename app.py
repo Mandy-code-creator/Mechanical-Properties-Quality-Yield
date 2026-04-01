@@ -82,7 +82,7 @@ if uploaded_file is not None:
         df['Time_Group'] = "Unknown"
 
     # --- ĐÃ SỬA: THÊM TAB 3 VÀO DANH SÁCH KHAI BÁO ---
-    tab0, tab1, tab2, tab3 = st.tabs(["0. Raw Check", "1. Yield Summary", "2. Distribution Analysis", "3.🔍 Root Cause & Diagnostic Analysis", "4. I-MR Analysis"])
+    tab0, tab1, tab2, tab3, tab4 = st.tabs(["0. Raw Check", "1. Yield Summary", "2. Distribution Analysis", "3.🔍 Root Cause & Diagnostic Analysis", "4. I-MR Analysis"])
 
     with tab0:
         st.dataframe(df.head(10), use_container_width=True)
