@@ -193,7 +193,6 @@ if uploaded_file is not None:
         st.header("🔍 4-Step Root Cause Diagnostic Flow")
         st.info("Automated diagnostic tools to identify 'hotspots' and explain quality shifts.")
         
-        # --- ĐƯA GLOBAL SPECS VÀO TRỰC TIẾP TRONG TAB 3 ĐỂ TRÁNH LỖI ---
         GLOBAL_SPECS = {
             'YS': {'min': 400, 'max': 460, 'target': 430},
             'TS': {'min': 410, 'max': 470, 'target': 440},
@@ -261,10 +260,10 @@ if uploaded_file is not None:
         ax.set_title(f"Distribution Shift: {feat_diag} (Good vs Bad)")
         ax.legend(); st.pyplot(fig); plt.close(fig)
 
-        # --- STEP 4: I-MR CHART WITH SPECS ---
+        # --- STEP 4: I-MR CHART WITH OUT-OF-SPEC HIGHLIGHTS ---
         st.markdown("---")
         st.subheader(f"Step 4: Time-Series Stability Tracking (I-MR Chart for {feat_diag})")
-        st.info("Filter down to a specific specification to view its timeline against Standard Specs.")
+        st.info("Filter down to a specific specification to view its timeline. Red dots indicate Out of Spec / Out of Control points.")
         
         imr_thick_list = sorted(df_filtered['Actual_Thickness'].dropna().unique())
         imr_mat_list = sorted(df_filtered['HR_Material'].astype(str).unique())
@@ -284,28 +283,56 @@ if uploaded_file is not None:
             
             fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 7), gridspec_kw={'height_ratios': [2, 1]})
             
-            # I-CHART
-            ax1.plot(vals, marker='o', ms=4, lw=1.5, color='#1f77b4', label='Individual Value')
+            # --- VẼ I-CHART ---
+            ax1.plot(vals, marker='o', ms=4, lw=1.5, color='#1f77b4', label='Individual Value', zorder=1)
             ax1.axhline(mean_val, color='green', ls='--', label='Process Mean')
             
-            # ADD GLOBAL SPECS
+            out_of_spec_x = []
+            out_of_spec_y = []
+            
             if feat_diag in GLOBAL_SPECS:
                 s = GLOBAL_SPECS[feat_diag]
-                if s.get('min'): ax1.axhline(s['min'], color='red', ls='-', lw=2, label=f"Lower Spec ({s['min']})")
-                if s.get('max'): ax1.axhline(s['max'], color='red', ls='-', lw=2, label=f"Upper Spec ({s['max']})")
+                min_s = s.get('min')
+                max_s = s.get('max')
+                
+                # Tìm các điểm bị lỗi vượt Spec
+                for i, v in enumerate(vals):
+                    if (min_s is not None and v < min_s) or (max_s is not None and v > max_s):
+                        out_of_spec_x.append(i)
+                        out_of_spec_y.append(v)
+
+                if min_s: ax1.axhline(min_s, color='red', ls='-', lw=2, label=f"Lower Spec ({min_s})")
+                if max_s: ax1.axhline(max_s, color='red', ls='-', lw=2, label=f"Upper Spec ({max_s})")
                 if s.get('target'): ax1.axhline(s['target'], color='black', ls=':', lw=1.5, label=f"Target ({s['target']})")
-                if s.get('min') and s.get('max'):
-                    ax1.axhspan(s['min'], s['max'], color='green', alpha=0.05)
+                if min_s and max_s: ax1.axhspan(min_s, max_s, color='green', alpha=0.05)
+            
+            # Tô đỏ các điểm vi phạm trên I-Chart
+            if out_of_spec_x:
+                ax1.scatter(out_of_spec_x, out_of_spec_y, color='red', s=60, zorder=5, label='Out of Spec (Violation)')
 
             ax1.set_title(f"I-Chart: {feat_diag} | {sel_period} | {sel_thick}mm ({sel_mat})", fontweight='bold')
             ax1.legend(loc='upper right', fontsize=8)
 
-            # MR-CHART
+            # --- VẼ MR-CHART ---
             mr = np.abs(np.diff(vals))
             mr_mean = np.mean(mr)
-            ax2.plot(mr, marker='o', ms=4, lw=1.5, color='orange')
+            ucl_mr = 3.267 * mr_mean
+            
+            ax2.plot(mr, marker='o', ms=4, lw=1.5, color='orange', label='Moving Range', zorder=1)
             ax2.axhline(mr_mean, color='green', ls='--', label='MR Mean')
-            ax2.axhline(3.267 * mr_mean, color='red', ls=':', label='UCL (MR)')
+            ax2.axhline(ucl_mr, color='red', ls=':', label=f'UCL ({ucl_mr:.1f})')
+            
+            # Tìm và tô đỏ các điểm vượt UCL trên MR-Chart
+            out_of_ctrl_x = []
+            out_of_ctrl_y = []
+            for i, m_val in enumerate(mr):
+                if m_val > ucl_mr:
+                    out_of_ctrl_x.append(i)
+                    out_of_ctrl_y.append(m_val)
+                    
+            if out_of_ctrl_x:
+                ax2.scatter(out_of_ctrl_x, out_of_ctrl_y, color='red', s=60, zorder=5, label='Out of Control (Variation)')
+
             ax2.set_title("Moving Range (MR-Chart)", fontweight='bold')
             ax2.legend(loc='upper right', fontsize=8)
 
