@@ -96,33 +96,72 @@ if uploaded_file is not None:
     df_filtered = df[df['Time_Group'].isin(selected_periods)]
     thickness_list = sorted(df['Actual_Thickness'].dropna().unique())
 
-    # --- TAB 1: YIELD ---
+    # --- TAB 1: YIELD SUMMARY & PERIOD COMPARISON ---
     with tab1:
-        st.header("1. Quality Yield Summary")
-        g_cols = ['Time_Group', 'Actual_Thickness', 'HR_Material']
-        sum_df = df_filtered.groupby(g_cols, dropna=False)[base_grades].sum().reset_index()
+        st.header("1. Quality Yield Summary & Period Comparison")
+        st.info("High-level overview of production yield and defect rates across different time periods.")
+
+        # --- EXECUTIVE SUMMARY: SO SÁNH TỔNG QUAN GIỮA CÁC GIAI ĐOẠN ---
+        st.subheader("📊 Executive Summary: Performance by Period")
+        
+        # Gom nhóm theo Time_Group để tính tổng
+        period_summary = df_filtered.groupby('Time_Group')[['Total_Qty', 'Good_Qty', 'Bad_Qty']].sum().reset_index()
+        
+        # Tính tỷ lệ % chuẩn xác (Weighted Average)
+        period_summary['Yield (%)'] = (period_summary['Good_Qty'] / period_summary['Total_Qty'] * 100).fillna(0).round(2)
+        period_summary['Defect_Rate (%)'] = (period_summary['Bad_Qty'] / period_summary['Total_Qty'] * 100).fillna(0).round(2)
+        
+        # Sắp xếp theo thứ tự thời gian
+        period_summary = period_summary.sort_values('Time_Group')
+
+        if not period_summary.empty and period_summary['Bad_Qty'].sum() > 0:
+            # Tự động tìm ra giai đoạn có tỷ lệ lỗi cao nhất
+            worst_period = period_summary.loc[period_summary['Defect_Rate (%)'].idxmax()]
+            
+            st.error(f"⚠️ **Executive Insight:** The period **{worst_period['Time_Group']}** exhibits the highest overall defect rate at **{worst_period['Defect_Rate (%)']}%** (Total Defective Coils: {worst_period['Bad_Qty']}).")
+            
+            # Hiển thị bảng tổng kết có đổ màu (Gradient) cho cột Defect_Rate
+            st.dataframe(
+                period_summary.style.background_gradient(subset=['Defect_Rate (%)'], cmap='Reds')
+                                    .background_gradient(subset=['Yield (%)'], cmap='Greens')
+                                    .format({'Yield (%)': '{:.2f}%', 'Defect_Rate (%)': '{:.2f}%'}),
+                use_container_width=True, 
+                hide_index=True
+            )
+        else:
+            st.success("✅ **Executive Insight:** Production is running smoothly with no significant defects in the selected periods.")
+            st.dataframe(period_summary, use_container_width=True, hide_index=True)
+
+        st.markdown("---")
+
+        # --- DETAILED YIELD (BẢNG CHI TIẾT NHƯ CŨ) ---
+        st.subheader("📑 Detailed Yield by Specification")
+        sum_df = df_filtered.groupby(['Time_Group', 'Actual_Thickness', 'HR_Material'], dropna=False)[base_grades].sum().reset_index()
         sum_df['Total_Qty'] = sum_df[base_grades].sum(axis=1)
+        
         for col in base_grades: 
             sum_df[f"% {col}"] = ((sum_df[col] / sum_df['Total_Qty'].replace(0, np.nan)) * 100).fillna(0).round(1)
         
         sum_df.rename(columns={'Time_Group': 'Period', 'Actual_Thickness': 'Thickness'}, inplace=True)
+        
         for period in selected_periods:
             p_data = sum_df[sum_df['Period'] == period]
             if not p_data.empty:
-                st.markdown(f"### 📅 Period: **{period}**")
+                st.markdown(f"#### 📅 Period: **{period}**")
                 st.dataframe(p_data.drop(columns=['Period']), use_container_width=True, hide_index=True)
 
+        # --- NÚT XUẤT EXCEL ---
         st.markdown("---")
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            sum_df.to_excel(writer, index=False, sheet_name='Yield_Summary')
+            sum_df.to_excel(writer, index=False, sheet_name='Detailed_Yield')
+            period_summary.to_excel(writer, index=False, sheet_name='Executive_Summary')
+        
         st.download_button(
-            label="📥 Download Yield Summary (Excel)",
-            data=output.getvalue(),
-            file_name="Yield_Summary.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            label="📥 Download Full Yield Report (Excel)", 
+            data=output.getvalue(), 
+            file_name="Quality_Yield_Report.xlsx"
         )
-
     # --- TAB 2: DISTRIBUTION ---
     global_x_bounds = {}
     for feat in mech_features:
