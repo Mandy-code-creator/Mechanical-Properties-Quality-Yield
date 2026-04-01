@@ -191,10 +191,12 @@ if uploaded_file is not None:
 # --- TAB 3: DIAGNOSTIC FLOW (4 STEPS) ---
     with tab3:
         st.header("🔍 4-Step Root Cause Diagnostic Flow")
+        st.info("Automated diagnostic tools to identify 'hotspots' and explain quality shifts.")
         
         # --- STEP 1: HEATMAP ---
         defect_str = ", ".join(bad_grades)
         st.subheader(f"Step 1: Locate the Hotspot (% Defect Rate: {defect_str})")
+        
         df_filtered['Defect_Rate'] = (df_filtered['Bad_Qty'] / df_filtered['Total_Qty'] * 100).fillna(0)
         df_filtered['Spec_Label'] = df_filtered['Actual_Thickness'].astype(str) + "mm (" + df_filtered['HR_Material'] + ")"
         
@@ -203,10 +205,12 @@ if uploaded_file is not None:
         if not heat_data.empty:
             fig, ax = plt.subplots(figsize=(12, 6))
             sns.heatmap(heat_data, annot=True, fmt=".1f", cmap="YlOrRd", linewidths=.5, ax=ax)
-            ax.set_title("HOTSPOT MAP: Redder = Higher Defect Rate", fontsize=12, fontweight='bold', color='#d62728', pad=15)
+            ax.set_title(f"HOTSPOT MAP: % DEFECT RATE ({defect_str})\n(Redder = Higher Defect Rate)", fontsize=12, fontweight='bold', color='#d62728', pad=15)
             ax.set_ylabel("Specification (Thickness & Material)")
             ax.set_xlabel("Production Period")
             st.pyplot(fig); plt.close(fig)
+        else:
+            st.warning("Not enough data to generate the diagnostic map.")
 
         # --- STEP 2: PARETO ---
         st.markdown("---")
@@ -215,49 +219,54 @@ if uploaded_file is not None:
         if defect_sums.sum() > 0:
             pareto_df = pd.DataFrame({'Count': defect_sums})
             pareto_df['Cum_Pct'] = pareto_df['Count'].cumsum() / pareto_df['Count'].sum() * 100
-            fig, ax1 = plt.subplots(figsize=(8, 4))
+            
+            fig, ax1 = plt.subplots(figsize=(10, 4))
             ax1.bar(pareto_df.index, pareto_df['Count'], color="#d62728", alpha=0.8)
             ax1.set_ylabel("Defective Coils")
+            
             ax2 = ax1.twinx()
             ax2.plot(pareto_df.index, pareto_df['Cum_Pct'], color="#1f77b4", marker="D", ms=5)
             ax2.axhline(80, color="orange", linestyle="--")
+            ax2.set_ylim(0, 110)
+            ax2.set_ylabel("Cumulative Percentage (%)")
+            
+            plt.title("Pareto Principle: Focusing on 80% of Quality Issues")
             st.pyplot(fig); plt.close(fig)
+        else:
+            st.success("No defects found in the selected data.")
 
         # --- STEP 3: OVERLAY ---
         st.markdown("---")
         st.subheader("Step 3: Property Shift Analysis (GOOD vs BAD)")
         active_mechs = [f for f in ['YS', 'TS', 'EL', 'YPE'] if f in df_filtered.columns]
-        feat_diag = st.selectbox("Select property to diagnose shift:", active_mechs, key="diag_feat")
+        
+        # Thêm key cho selectbox để tránh trùng ID
+        feat_diag = st.selectbox("Select property to diagnose shift:", active_mechs, key="diag_feat_key")
         
         fig, ax = plt.subplots(figsize=(10, 4))
         g_vals = df_filtered[df_filtered['Good_Qty'] > 0][feat_diag].dropna()
         b_vals = df_filtered[df_filtered['Bad_Qty'] > 0][feat_diag].dropna()
         
-        if not g_vals.empty: sns.kdeplot(g_vals, ax=ax, label="GOOD", fill=True, color="green", alpha=0.3)
-        if not b_vals.empty: sns.kdeplot(b_vals, ax=ax, label="BAD", fill=True, color="red", alpha=0.3)
+        if not g_vals.empty: sns.kdeplot(g_vals, ax=ax, label="GOOD (A-B+, A-B)", fill=True, color="green", alpha=0.3)
+        if not b_vals.empty: sns.kdeplot(b_vals, ax=ax, label="BAD (A-B-, B+, B)", fill=True, color="red", alpha=0.3)
+        
         ax.set_title(f"Distribution Shift: {feat_diag} (Good vs Bad)")
         ax.legend(); st.pyplot(fig); plt.close(fig)
 
-       # --- STEP 4: I-MR CHART WITH SPECS ---
+        # --- STEP 4: I-MR CHART WITH SPECS ---
         st.markdown("---")
         st.subheader(f"Step 4: Time-Series Stability Tracking (I-MR Chart for {feat_diag})")
         st.info("Filter down to a specific specification to view its timeline against Standard Specs.")
         
-        # --- THÊM 2 DÒNG NÀY ĐỂ SỬA LỖI NAMERROR ---
-        thickness_list = sorted(df_filtered['Actual_Thickness'].dropna().unique())
-        material_list = sorted(df_filtered['HR_Material'].astype(str).unique())
+        # Khai báo biến danh sách để tránh NameError
+        imr_thick_list = sorted(df_filtered['Actual_Thickness'].dropna().unique())
+        imr_mat_list = sorted(df_filtered['HR_Material'].astype(str).unique())
         
         c1, c2, c3 = st.columns(3)
-        sel_period = c1.selectbox("Filter by Period:", selected_periods)
-        sel_thick = c2.selectbox("Filter by Thickness:", thickness_list)
-        sel_mat = c3.selectbox("Filter by Material:", material_list)
-
-        # ... (phần code vẽ I-MR Chart bên dưới giữ nguyên) ...
-        
-        c1, c2, c3 = st.columns(3)
-        sel_period = c1.selectbox("Filter by Period:", selected_periods)
-        sel_thick = c2.selectbox("Filter by Thickness:", thickness_list)
-        sel_mat = c3.selectbox("Filter by Material:", material_list)
+        # Thêm các tham số key độc nhất để tránh lỗi StreamlitDuplicateElementId
+        sel_period = c1.selectbox("Filter by Period:", selected_periods, key="imr_period_key")
+        sel_thick = c2.selectbox("Filter by Thickness:", imr_thick_list, key="imr_thick_key")
+        sel_mat = c3.selectbox("Filter by Material:", imr_mat_list, key="imr_mat_key")
 
         imr_data = df_filtered[(df_filtered['Time_Group'] == sel_period) & 
                                (df_filtered['Actual_Thickness'] == sel_thick) & 
@@ -297,7 +306,7 @@ if uploaded_file is not None:
             fig.tight_layout()
             st.pyplot(fig); plt.close(fig)
         else:
-            st.warning("Not enough data to generate I-MR chart for this specific combination.")
+            st.warning("Not enough continuous data points to generate an I-MR chart for this specific filter combination.")
     # --- EXPORT SECTION ---
     # (Giữ nguyên logic Export ban đầu của bạn...)
     st.sidebar.header("📥 Export Options")
