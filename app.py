@@ -8,7 +8,7 @@ from matplotlib.patches import Patch
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Quality Dashboard", layout="wide")
-st.title("📊 Production Quality Yield & Distribution")
+st.title("📊 Production Quality Yield & Period Comparison")
 st.markdown("---")
 
 # --- GLOBAL SPECS ---
@@ -81,7 +81,6 @@ if uploaded_file is not None:
     else:
         df['Time_Group'] = "Unknown"
 
-    # --- ĐÃ SỬA: KHAI BÁO ĐỦ 4 TABS ---
     tab0, tab1, tab2, tab3 = st.tabs(["0. Raw Check", "1. Yield Summary", "2. Distribution Analysis", "3. Period Comparison"])
 
     # --- GLOBAL FILTERING ---
@@ -93,9 +92,10 @@ if uploaded_file is not None:
     df_filtered = df[df['Time_Group'].isin(selected_periods)]
     thickness_list = sorted(df['Actual_Thickness'].dropna().unique())
 
-    # --- TAB 2 LOGIC (TRẢ LẠI THIẾT KẾ CŨ) ---
+    # --- TAB 2 LOGIC (WITH YPE) ---
     global_x_bounds = {}
-    for feat in mech_features:
+    target_plots = ['YS', 'TS', 'EL', 'YPE']
+    for feat in target_plots:
         if feat in df.columns:
             vd = df[[feat, 'Total_Qty']].dropna().copy()
             vd = vd[vd['Total_Qty'] > 0]
@@ -116,7 +116,7 @@ if uploaded_file is not None:
 
     def plot_dist(ax, data, feat, title, y_lim):
         c_map = {'A-B+': '#2ca02c', 'A-B': '#1f77b4', 'A-B-': '#ff7f0e', 'B+': '#9467bd', 'B': '#d62728'}
-        fmin, fmax = global_x_bounds.get(feat, (data[feat].min(), data[feat].max()))
+        fmin, fmax = global_x_bounds.get(feat, (data[feat].min() if not data[feat].empty else 0, data[feat].max() if not data[feat].empty else 100))
         v_l, w_l, clrs, m_info = [], [], [], []
         for g in base_grades:
             td = data[[feat, g]].dropna()
@@ -135,49 +135,46 @@ if uploaded_file is not None:
         ax.legend(handles=[Patch(facecolor=c_map[g], label=g) for g in base_grades if g in data.columns], loc='upper right', fontsize=7)
         ax.set_xlim(fmin, fmax); ax.set_ylim(0, y_lim); ax.set_title(title, fontsize=10, fontweight='bold')
 
-    with tab0:
-        st.dataframe(df.head(5))
-
-    with tab1:
-        st.header("1. Yield Summary")
-        # (Giữ code Tab 1 cũ của bạn...)
-        st.write(df_filtered.groupby(['Time_Group', 'Actual_Thickness'])[base_grades].sum())
+    with tab0: st.dataframe(df.head(5))
+    with tab1: st.write(df_filtered.groupby(['Time_Group', 'Actual_Thickness'])[base_grades].sum())
 
     with tab2:
-        st.header("2. Distribution Analysis (Original Design)")
+        st.header("2. Distribution Analysis (Including YPE)")
         for period in selected_periods:
             df_p = df_filtered[df_filtered['Time_Group'] == period]
             if df_p.empty: continue
             st.markdown(f"### 📅 Period: **{period}**")
-            ov_y = get_shared_y(df_p, ['YS', 'TS', 'EL'])
+            ov_y = get_shared_y(df_p, target_plots)
             cols = st.columns(2)
-            for idx, f in enumerate([x for x in ['YS', 'TS', 'EL'] if x in df_p.columns]):
+            active_feats = [f for f in target_plots if f in df_p.columns]
+            for idx, f in enumerate(active_feats):
                 with cols[idx%2]:
                     fig, ax = plt.subplots(figsize=(8, 4.5))
                     plot_dist(ax, df_p, f, f"{f} (Overall)", ov_y)
                     st.pyplot(fig); plt.close(fig)
 
-    # --- TAB 3: SIDE-BY-SIDE (NEW ONLY) ---
+    # --- TAB 3: SIDE-BY-SIDE (INCLUDING YPE) ---
     with tab3:
-        st.header("3. Period Comparison")
+        st.header("3. Period Comparison (Including YPE)")
         for thick in thickness_list:
             df_t = df_filtered[df_filtered['Actual_Thickness'] == thick]
             if df_t.empty: continue
             st.subheader(f"📏 Thickness: {thick} mm")
             comp_cols = st.columns(2)
-            for idx, f in enumerate(['YS', 'TS', 'EL']):
-                if f in df_t.columns:
-                    with comp_cols[idx % 2]:
-                        fig, ax = plt.subplots(figsize=(10, 6))
-                        sns.boxplot(data=df_t, x='Time_Group', y=f, palette="Set2", ax=ax)
-                        # Vẽ vùng Spec làm tham chiếu
-                        if f in GLOBAL_SPECS:
-                            s = GLOBAL_SPECS[f]
-                            if s.get('min') and s.get('max'):
-                                ax.axhspan(s['min'], s['max'], color='green', alpha=0.1, label='Target Zone')
-                        ax.set_title(f"{f} Comparison across Periods")
-                        plt.xticks(rotation=15)
-                        st.pyplot(fig); plt.close(fig)
+            active_comp = [f for f in target_plots if f in df_t.columns]
+            for idx, f in enumerate(active_comp):
+                with comp_cols[idx % 2]:
+                    fig, ax = plt.subplots(figsize=(10, 6))
+                    sns.boxplot(data=df_t, x='Time_Group', y=f, palette="Set2", ax=ax)
+                    if f in GLOBAL_SPECS:
+                        s = GLOBAL_SPECS[f]
+                        if s.get('min') and s.get('max'):
+                            ax.axhspan(s['min'], s['max'], color='green', alpha=0.1, label='Target Zone')
+                        elif s.get('min'):
+                            ax.axhline(s['min'], color='red', ls='--', alpha=0.5, label='Min Spec')
+                    ax.set_title(f"{f} Comparison across Periods")
+                    plt.xticks(rotation=15)
+                    st.pyplot(fig); plt.close(fig)
     # --- EXPORT SECTION ---
     st.sidebar.header("📥 Export Options")
     if st.sidebar.button("Download Detailed Excel"):
