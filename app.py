@@ -238,10 +238,21 @@ if uploaded_file is not None:
         ax.set_title(f"Distribution Shift: {feat_diag} (Good vs Bad)")
         ax.legend(); st.pyplot(fig); plt.close(fig)
 
-        # --- STEP 4: I-MR CHART WITH SPECS ---
+       # --- STEP 4: I-MR CHART WITH SPECS ---
         st.markdown("---")
         st.subheader(f"Step 4: Time-Series Stability Tracking (I-MR Chart for {feat_diag})")
         st.info("Filter down to a specific specification to view its timeline against Standard Specs.")
+        
+        # --- THÊM 2 DÒNG NÀY ĐỂ SỬA LỖI NAMERROR ---
+        thickness_list = sorted(df_filtered['Actual_Thickness'].dropna().unique())
+        material_list = sorted(df_filtered['HR_Material'].astype(str).unique())
+        
+        c1, c2, c3 = st.columns(3)
+        sel_period = c1.selectbox("Filter by Period:", selected_periods)
+        sel_thick = c2.selectbox("Filter by Thickness:", thickness_list)
+        sel_mat = c3.selectbox("Filter by Material:", material_list)
+
+        # ... (phần code vẽ I-MR Chart bên dưới giữ nguyên) ...
         
         c1, c2, c3 = st.columns(3)
         sel_period = c1.selectbox("Filter by Period:", selected_periods)
