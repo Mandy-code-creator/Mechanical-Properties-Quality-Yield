@@ -29,11 +29,18 @@ if uploaded_file is not None:
     }
     df.rename(columns=rename_map, inplace=True)
     
-    # --- 2. DATA PREPROCESSING & TYPE CASTING ---
+    # 2.1. DATA PREPROCESSING & TYPE CASTING
     if '年度' in df.columns:
         df['年度'] = df['年度'].astype(str).str.replace(r'\.0$', '', regex=True)
+        
+    # --- BẮT ĐÚNG ĐỊNH DẠNG 20240101 (YYYYMMDD) ---
     if '烤三生產日期' in df.columns:
-        df['烤三生產日期'] = pd.to_datetime(df['烤三生產日期'], errors='coerce')
+        # Ép về chuỗi (chống trôi số thập phân của Excel) và gỡ lỗi '.0'
+        date_str = df['烤三生產日期'].astype(str).str.replace(r'\.0$', '', regex=True)
+        # Dùng format='%Y%m%d' để ép máy tính hiểu chính xác cấu trúc 2024-01-01
+        df['烤三生產日期'] = pd.to_datetime(date_str, format='%Y%m%d', errors='coerce')
+    # ---------------------------------------------
+        
     if '厚度' in df.columns:
         df['厚度'] = pd.to_numeric(df['厚度'], errors='coerce')
     if '熱軋材質' in df.columns:
