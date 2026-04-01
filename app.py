@@ -395,57 +395,72 @@ if uploaded_file is not None:
                     fig.tight_layout()
                     st.pyplot(fig); plt.close(fig)
                     st.markdown("---")
-    # --- TASK 4: I-MR CHART (TIMELINE STABILITY) ---
+   # --- TAB 4: I-MR CHART (TIMELINE STABILITY) ---
     with tab4:
-        st.header("📈 Task 4: I-MR Stability Tracking (Chronological)")
-        st.info("Analysis based on production date from 2024 to 2026. Red dots = Out of Spec.")
+        st.header("📈 Task 4: I-MR Stability Tracking")
+        GLOBAL_SPECS = {
+            'YS': {'min': 400, 'max': 460, 'target': 430},
+            'TS': {'min': 410, 'max': 470, 'target': 440},
+            'EL': {'min': 25, 'max': None, 'target': None},
+            'YPE': {'min': 4, 'max': None, 'target': None}
+        }
 
-        # Filters for Task 4
+        # --- NÂNG CẤP: THÊM BỘ LỌC THỜI GIAN ---
+        imr_periods = ["All Periods"] + sorted(df_filtered['Time_Group'].dropna().unique().tolist())
         imr_thicks = sorted(df_filtered['Actual_Thickness'].dropna().unique())
         imr_mats = sorted(df_filtered['HR_Material'].astype(str).unique())
         
-        c1, c2 = st.columns(2)
-        sel_t = c1.selectbox("Filter Thickness:", imr_thicks, key="t5_t")
-        sel_m = c2.selectbox("Filter Material:", imr_mats, key="t5_m")
+        # Chia làm 3 cột
+        c1, c2, c3 = st.columns(3)
+        sel_p = c1.selectbox("Filter Period:", imr_periods, key="t4_p")
+        sel_t = c2.selectbox("Filter Thickness:", imr_thicks, key="t4_t")
+        sel_m = c3.selectbox("Filter Material:", imr_mats, key="t4_m")
 
-        imr_df = df_filtered[(df_filtered['Actual_Thickness'] == sel_t) & 
-                            (df_filtered['HR_Material'] == sel_m)].sort_values(by='烤三生產日期').reset_index(drop=True)
+        # Áp dụng logic lọc dữ liệu
+        if sel_p == "All Periods":
+            imr_df = df_filtered[(df_filtered['Actual_Thickness'] == sel_t) & 
+                                (df_filtered['HR_Material'] == sel_m)]
+        else:
+            imr_df = df_filtered[(df_filtered['Time_Group'] == sel_p) & 
+                                (df_filtered['Actual_Thickness'] == sel_t) & 
+                                (df_filtered['HR_Material'] == sel_m)]
+                                
+        # Sắp xếp theo ngày sản xuất
+        imr_df = imr_df.sort_values(by='烤三生產日期').reset_index(drop=True)
 
         if not imr_df.empty:
             for feat in ['YS', 'TS', 'EL', 'YPE']:
                 if feat in imr_df.columns:
                     valid_data = imr_df.dropna(subset=[feat, '烤三生產日期']).copy()
                     if len(valid_data) > 1:
-                        st.markdown(f"### 🛡️ Chronological Stability: **{feat}**")
+                        st.markdown(f"### 🛡️ Stability: **{feat}**")
                         dates, vals = valid_data['烤三生產日期'], valid_data[feat].values
                         mean_v = np.mean(vals)
                         
-                        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 8), gridspec_kw={'height_ratios': [2, 1]})
+                        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 7), gridspec_kw={'height_ratios': [2, 1]})
                         
                         # I-Chart
                         ax1.plot(dates, vals, marker='o', ms=4, lw=1, color='#1f77b4', alpha=0.6, label=feat)
                         ax1.axhline(mean_v, color='green', ls='--', label='Mean')
                         
-                        # Add Global Specs & Highlights
                         if feat in GLOBAL_SPECS:
                             s = GLOBAL_SPECS[feat]
-                            if s['min']: ax1.axhline(s['min'], color='red', lw=2, label=f"Min ({s['min']})")
-                            if s['max']: ax1.axhline(s['max'], color='red', lw=2, label=f"Max ({s['max']})")
-                            if s['target']: ax1.axhline(s['target'], color='black', ls=':', label='Target')
+                            if s['min']: ax1.axhline(s['min'], color='red', lw=2)
+                            if s['max']: ax1.axhline(s['max'], color='red', lw=2)
                             
-                            # Violation Detection
                             v_x, v_y = [], []
                             for i, v in enumerate(vals):
                                 if (s['min'] and v < s['min']) or (s['max'] and v > s['max']):
                                     v_x.append(dates.iloc[i]); v_y.append(v)
-                            if v_x: ax1.scatter(v_x, v_y, color='red', s=60, zorder=5, label='Violation')
+                            if v_x: ax1.scatter(v_x, v_y, color='red', s=60, zorder=5)
                         
-                        # Year Separation Lines
-                        for year in dates.dt.year.unique():
-                            y_start = pd.Timestamp(year=year, month=1, day=1)
-                            if dates.min() <= y_start <= dates.max():
-                                ax1.axvline(y_start, color='black', ls='-.', alpha=0.3)
-                                ax1.text(y_start, ax1.get_ylim()[1], f" {year}", fontsize=10, va='top')
+                        # Nếu xem "All Periods" thì vẽ thêm vạch phân tách năm
+                        if sel_p == "All Periods":
+                            for year in dates.dt.year.unique():
+                                y_start = pd.Timestamp(year=year, month=1, day=1)
+                                if dates.min() <= y_start <= dates.max():
+                                    ax1.axvline(y_start, color='black', ls='-.', alpha=0.3)
+                                    ax1.text(y_start, ax1.get_ylim()[1], f" {year}", fontsize=10, va='top')
 
                         ax1.set_title(f"Individual Chart (I) - {feat}", fontweight='bold')
                         ax1.legend(loc='upper right', fontsize=8)
@@ -456,9 +471,8 @@ if uploaded_file is not None:
                         ucl_mr = 3.267 * mr_mean
                         ax2.plot(dates.iloc[1:], mr, marker='o', ms=3, color='orange', alpha=0.6)
                         ax2.axhline(mr_mean, color='green', ls='--')
-                        ax2.axhline(ucl_mr, color='red', ls=':', label=f'UCL ({ucl_mr:.1f})')
+                        ax2.axhline(ucl_mr, color='red', ls=':')
                         
-                        # High variation points
                         hv_x, hv_y = [], []
                         for i, m_val in enumerate(mr):
                             if m_val > ucl_mr: hv_x.append(dates.iloc[i+1]); hv_y.append(m_val)
@@ -466,13 +480,18 @@ if uploaded_file is not None:
 
                         ax2.set_title("Moving Range Chart (MR)", fontweight='bold')
                         fig.autofmt_xdate()
+                        fig.tight_layout()
+                        
+                        # LƯU ẢNH I-MR ĐỂ XUẤT PDF
+                        safe_p_imr = "".join([c if c.isalnum() else "_" for c in sel_p])
+                        plt.savefig(f"export_imr_{feat}.png", bbox_inches='tight', dpi=150)
                         st.pyplot(fig); plt.close(fig)
                         
                         # Insight
                         if v_x:
-                            st.error(f"⚠️ **Stability Insight:** Found {len(v_x)} out-of-spec points for {feat}. Check production logs around these dates.")
+                            st.error(f"⚠️ **Stability Insight:** Found {len(v_x)} out-of-spec points for {feat}.")
                         else:
-                            st.success(f"✅ **Stability Insight:** {feat} is within specification limits for this period.")
+                            st.success(f"✅ **Stability Insight:** {feat} is within specification limits.")
         else:
             st.warning("No data found for the selected combination.")                
     # --- EXPORT SECTION ---
