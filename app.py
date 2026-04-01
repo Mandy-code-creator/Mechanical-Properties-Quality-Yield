@@ -7,6 +7,7 @@ import scipy.stats as stats
 import io
 from fpdf import FPDF
 import os
+import datetime
 from matplotlib.patches import Patch
 
 # --- PAGE CONFIGURATION ---
@@ -21,12 +22,13 @@ def load_and_preprocess(file_buffer):
     df = pd.read_excel(file_buffer)
     df.columns = df.columns.str.strip() 
 
-    # DYNAMICALLY LOCATE AND RENAME THICKNESS COLUMN
+    # 1. DYNAMICALLY LOCATE AND RENAME THICKNESS COLUMN
     if 'Thickness' not in df.columns:
         target_thickness_col = None
         for i, col in enumerate(df.columns):
             base_col = col.split('.')[0] if '.' in col else col
             if base_col == '厚度':
+                # Check if the next column is '型式'
                 if i + 1 < len(df.columns):
                     next_col = df.columns[i+1].split('.')[0] if '.' in df.columns[i+1] else df.columns[i+1]
                     if next_col == '型式':
@@ -38,20 +40,51 @@ def load_and_preprocess(file_buffer):
         elif '厚度' in df.columns:
             df.rename(columns={'厚度': 'Thickness'}, inplace=True)
 
-    # COLUMN TRANSLATION
-    rename_map = {
-        '烤漆降伏強度': 'YS', '烤漆抗拉強度': 'TS', '伸長率': 'EL',
-        'A-B+': 'A-B+_Qty', 'A-B': 'A-B_Qty', 'A-B-': 'A-B-_Qty', 'B+': 'B+_Qty', 'B': 'B_Qty'
-    }
-    df.rename(columns=rename_map, inplace=True)
+    # 2. ROBUST DATE PARSING FOR YYYYMMDD
+    def robust_date_parse(val):
+        if pd.isnull(val): return pd.NaT
+        if isinstance(val, pd.Timestamp): return val
+        if isinstance(val, datetime.date): return pd.Timestamp(val)
+        
+        val_str = str(val).strip()
+        if val_str.endswith('.0'): 
+            val_str = val_str[:-2]
+            
+        if len(val_str) == 8 and val_str.isdigit():
+            try: return pd.to_datetime(val_str, format='%Y%m%d')
+            except: pass
+            
+        try: return pd.to_datetime(val_str)
+        except: return pd.NaT
+
+    if '烤三生產日期' in df.columns:
+        df['烤三生產日期'] = df['烤三生產日期'].apply(robust_date_parse)
+
+    # 3. HANDLING DUPLICATE QUALITY GRADE COLUMNS (e.g., A-B+ and A-B+.1)
+    grade_bases = ['A-B+', 'A-B', 'A-B-', 'B+', 'B']
+    for base in grade_bases:
+        qty_col_name = base + '_Qty'
+        matching_cols = []
+        for c in df.columns:
+            if c == base:
+                matching_cols.append(c)
+            elif c.startswith(base + '.'):
+                suffix = c[len(base)+1:]
+                if suffix.isdigit():
+                    matching_cols.append(c)
+        
+        if matching_cols:
+            df[qty_col_name] = df[matching_cols].apply(pd.to_numeric, errors='coerce').fillna(0).sum(axis=1)
+        else:
+            df[qty_col_name] = 0
+
+    # 4. TRANSLATE MECHANICAL FEATURES
+    rename_mech = {'烤漆降伏強度': 'YS', '烤漆抗拉強度': 'TS', '伸長率': 'EL'}
+    df.rename(columns=rename_mech, inplace=True)
     
-    # DATA PREPROCESSING
+    # 5. DATA PREPROCESSING
     if '年度' in df.columns:
         df['年度'] = df['年度'].astype(str).str.replace(r'\.0$', '', regex=True)
-        
-    if '烤三生產日期' in df.columns:
-        date_str = df['烤三生產日期'].astype(str).str.replace(r'\.0$', '', regex=True)
-        df['烤三生產日期'] = pd.to_datetime(date_str, format='%Y%m%d', errors='coerce').fillna(pd.to_datetime(date_str, errors='coerce'))
 
     # STRICT WHITELIST FOR THICKNESS
     if 'Thickness' in df.columns:
@@ -62,7 +95,7 @@ def load_and_preprocess(file_buffer):
     if '熱軋材質' in df.columns:
         df['熱軋材質'] = df['熱軋材質'].astype(str).str.strip()
 
-    # PERIOD CATEGORIZATION LOGIC
+    # 6. PERIOD CATEGORIZATION LOGIC
     def categorize_period(date_val):
         if pd.isnull(date_val): return "Unknown (No Date)"
         y = date_val.year
@@ -80,7 +113,7 @@ def load_and_preprocess(file_buffer):
     if '烤三生產日期' in df.columns:
         df['Time_Group'] = df['烤三生產日期'].apply(categorize_period)
         
-        # RESTORED "Unknown (No Date)" to prevent data loss. Only drop strict "Other" years.
+        # Remove strictly invalid years to keep dashboard clean
         df = df[df['Time_Group'] != "Other"]
         
         # GENERATE 2025 FULL YEAR DATA
@@ -93,7 +126,7 @@ def load_and_preprocess(file_buffer):
 
     return df
 
-# --- 1. FILE UPLOAD & PROCESSING ---
+# --- 1. MAIN APP EXECUTION ---
 uploaded_file = st.file_uploader("Upload Excel data (.xlsx)", type=["xlsx"])
 
 if uploaded_file is not None:
@@ -119,9 +152,8 @@ if uploaded_file is not None:
     else:
         thickness_list = []
 
-    count_cols = [col for col in ['A-B+_Qty', 'A-B_Qty', 'A-B-_Qty', 'B+_Qty', 'B_Qty'] if col in df.columns]
-    for col in count_cols: df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-    df['Total_Count'] = df[count_cols].sum(axis=1)
+    count_cols = ['A-B+_Qty', 'A-B_Qty', 'A-B-_Qty', 'B+_Qty', 'B_Qty']
+    df['Total_Qty'] = df[count_cols].sum(axis=1)
 
     mech_features = [feat for feat in ['YS', 'TS', 'EL', 'YPE', 'HARDNESS'] if feat in df.columns]
     for feat in mech_features: df[feat] = pd.to_numeric(df[feat], errors='coerce')
@@ -166,7 +198,6 @@ if uploaded_file is not None:
             summary_df = df.groupby(existing_group_cols)[count_cols].sum().reset_index()
             summary_df['Total_Qty'] = summary_df[count_cols].sum(axis=1)
             
-            # KEEP TOTAL = 0 ROWS TO PREVENT DISAPPEARING THICKNESSES
             for col in count_cols: 
                 summary_df[f"% {col.replace('_Qty','')}"] = ((summary_df[col] / summary_df['Total_Qty'].replace(0, np.nan)) * 100).fillna(0).round(1)
             
@@ -269,7 +300,7 @@ if uploaded_file is not None:
         chart_method = c4.radio("I-MR Chart Limits Based On:", ["Standard Method", "IQR Filtered Method"])
 
     spec_limits = {"YS": (405, 500), "TS": (415, 550), "EL": (25, None), "YPE": (4, None)}
-    good_cols = [c for c in ['A-B+_Qty', 'A-B_Qty'] if c in df.columns]
+    good_cols = ['A-B+_Qty', 'A-B_Qty']
 
     # --- ITERATE THROUGH PERIODS ---
     for period in selected_periods:
@@ -319,32 +350,33 @@ if uploaded_file is not None:
             seg_dist_overall = "N/A" if total_n_overall == 0 else ", ".join([f"{k.replace('_Qty','')}:{int(round(df_p[k].sum()/total_n_overall*100))}%" for k in count_cols])
 
             for f in mech_features:
-                if good_cols:
-                    df_ov = df_p[[f] + good_cols].dropna(subset=[f]).copy()
+                df_ov = df_p[[f] + good_cols].dropna(subset=[f]).copy()
+                if not df_ov.empty:
                     df_ov['Good_Qty'] = df_ov[good_cols].sum(axis=1)
                     df_ov = df_ov[df_ov['Good_Qty'] > 0]
-                    spec_str_ov = f"{int(spec_limits[f][0])}-{int(spec_limits[f][1])}" if f in spec_limits and spec_limits[f][1] else (f">={int(spec_limits[f][0])}" if f in spec_limits and spec_limits[f][0] else "N/A")
+                    
+                spec_str_ov = f"{int(spec_limits[f][0])}-{int(spec_limits[f][1])}" if f in spec_limits and spec_limits[f][1] else (f">={int(spec_limits[f][0])}" if f in spec_limits and spec_limits[f][0] else "N/A")
 
-                    if not df_ov.empty:
-                        v, w = df_ov[f].values, df_ov['Good_Qty'].values
-                        (m_s, s_s), (m_i, s_i) = calculate_stats(v, w, iqr_k)
-                        for m_name, m_val, s_val in [("Standard", m_s, s_s), (f"IQR (k={iqr_k})", m_i, s_i)]:
-                            is_std = (m_name == "Standard")
-                            row = {
-                                "Period": period,
-                                "Feature": f if is_std else "", 
-                                "Method": m_name,
-                                "Limit": spec_str_ov if is_std else "", 
-                                "Segment Dist": seg_dist_overall if is_std else "",
-                                "TARGET GOAL": int(round(m_val)), "TOLERANCE": int(round(s_val)),
-                                f"MILL {sigma_mill}σ": f"{max(0, int(round(m_val - sigma_mill*s_val)))}-{int(round(m_val + sigma_mill*s_val))}",
-                                f"RELEASE {sigma_release}σ": f"{max(0, int(round(m_val - sigma_release*s_val)))}-{int(round(m_val + sigma_release*s_val))}"
-                            }
-                            period_overall_data.append(row)
-                            
-                            exp_ov_row = row.copy()
-                            exp_ov_row['Feature'] = f; exp_ov_row['Limit'] = spec_str_ov; exp_ov_row['Segment Dist'] = seg_dist_overall
-                            overall_export_data.append(exp_ov_row)
+                if not df_ov.empty:
+                    v, w = df_ov[f].values, df_ov['Good_Qty'].values
+                    (m_s, s_s), (m_i, s_i) = calculate_stats(v, w, iqr_k)
+                    for m_name, m_val, s_val in [("Standard", m_s, s_s), (f"IQR (k={iqr_k})", m_i, s_i)]:
+                        is_std = (m_name == "Standard")
+                        row = {
+                            "Period": period,
+                            "Feature": f if is_std else "", 
+                            "Method": m_name,
+                            "Limit": spec_str_ov if is_std else "", 
+                            "Segment Dist": seg_dist_overall if is_std else "",
+                            "TARGET GOAL": int(round(m_val)), "TOLERANCE": int(round(s_val)),
+                            f"MILL {sigma_mill}σ": f"{max(0, int(round(m_val - sigma_mill*s_val)))}-{int(round(m_val + sigma_mill*s_val))}",
+                            f"RELEASE {sigma_release}σ": f"{max(0, int(round(m_val - sigma_release*s_val)))}-{int(round(m_val + sigma_release*s_val))}"
+                        }
+                        period_overall_data.append(row)
+                        
+                        exp_ov_row = row.copy()
+                        exp_ov_row['Feature'] = f; exp_ov_row['Limit'] = spec_str_ov; exp_ov_row['Segment Dist'] = seg_dist_overall
+                        overall_export_data.append(exp_ov_row)
 
             display_period_df = pd.DataFrame(period_overall_data).drop(columns=['Period'], errors='ignore')
             st.dataframe(display_period_df, use_container_width=True, hide_index=True)
@@ -359,10 +391,11 @@ if uploaded_file is not None:
                 plot_data_dict = {}
                 
                 for f in mech_features:
-                    temp_calc = df_t[[f] + good_cols].dropna(subset=[f]).copy() if good_cols else pd.DataFrame()
+                    temp_calc = df_t[[f] + good_cols].dropna(subset=[f]).copy()
                     if not temp_calc.empty:
                         temp_calc['Good_Qty'] = temp_calc[good_cols].sum(axis=1)
                         temp_calc = temp_calc[temp_calc['Good_Qty'] > 0]
+                        
                     spec_str = f"{int(spec_limits[f][0])}-{int(spec_limits[f][1])}" if f in spec_limits and spec_limits[f][1] else (f">={int(spec_limits[f][0])}" if f in spec_limits and spec_limits[f][0] else "N/A")
 
                     if not temp_calc.empty:
