@@ -12,17 +12,17 @@ from matplotlib.patches import Patch
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="QC Yield & Control Limit Optimizer", layout="wide")
 
-st.title("📊 Quality Yield & Control Limit Optimizer (Production Cycle View)")
+st.title("📊 Quality Yield & Control Limit Optimizer")
 st.markdown("---")
 
 # --- 1. FILE UPLOAD ---
-uploaded_file = st.file_uploader("Upload your Excel data (.xlsx)", type=["xlsx"])
+uploaded_file = st.file_uploader("Upload Excel data (.xlsx)", type=["xlsx"])
 
 if uploaded_file is not None:
     df = pd.read_excel(uploaded_file)
     df.columns = df.columns.str.strip() 
 
-    # --- ⚙️ BỘ CHUYỂN ĐỔI FORMAT ---
+    # --- COLUMN TRANSLATION ---
     rename_map = {
         '烤漆降伏強度': 'YS', '烤漆抗拉強度': 'TS', '伸長率': 'EL',
         'A-B+': 'A-B+數', 'A-B': 'A-B數', 'A-B-': 'A-B-數', 'B+': 'B+數', 'B': 'B數'
@@ -33,21 +33,21 @@ if uploaded_file is not None:
     if '年度' in df.columns:
         df['年度'] = df['年度'].astype(str).str.replace(r'\.0$', '', regex=True)
         
-    # --- 🛠️ FIX LỖI NGÀY THÁNG ĐỊNH DẠNG DÍNH LIỀN (YYYYMMDD) ---
+    # FIX DATE PARSING (YYYYMMDD)
     if '烤三生產日期' in df.columns:
         date_str = df['烤三生產日期'].astype(str).str.replace(r'\.0$', '', regex=True)
-        # Ép máy tính hiểu cấu trúc số dính liền, nếu lỗi sẽ dự phòng bằng cách parse tự do
         df['烤三生產日期'] = pd.to_datetime(date_str, format='%Y%m%d', errors='coerce').fillna(pd.to_datetime(date_str, errors='coerce'))
 
+    # STRICTLY USE '厚度' COLUMN FOR THICKNESS AND AVOID FLOATING POINT ERRORS
     if '厚度' in df.columns:
-        df['厚度'] = pd.to_numeric(df['厚度'], errors='coerce')
+        df['厚度'] = pd.to_numeric(df['厚度'], errors='coerce').round(3)
         
     if '熱軋材質' in df.columns:
         df['熱軋材質'] = df['熱軋材質'].astype(str).str.strip()
 
-    # --- ⚙️ LOGIC THỜI GIAN ĐẶC THÙ (Q3: 29/06 - 30/09) VÀ BỎ SỐ THỨ TỰ ---
+    # --- PERIOD CATEGORIZATION LOGIC ---
     def categorize_period(date_val):
-        if pd.isnull(date_val): return "Unknown / No Date"
+        if pd.isnull(date_val): return "Unknown"
         
         y = date_val.year
         q3_start = pd.Timestamp(2025, 6, 29)
@@ -57,9 +57,9 @@ if uploaded_file is not None:
             return "2024 (Full Year)"
         elif y == 2025:
             if date_val < q3_start:
-                return "2025 H1 (Đến 28/06)"
+                return "2025 H1 (Until 06/28)"
             elif q3_start <= date_val <= q3_end:
-                return "2025 Q3 (29/06 - 30/09)"
+                return "2025 Q3 (06/29 - 09/30)"
             else:
                 return "2025 Q4"
         elif y == 2026:
@@ -68,47 +68,29 @@ if uploaded_file is not None:
 
     if '烤三生產日期' in df.columns:
         df['Time_Group'] = df['烤三生產日期'].apply(categorize_period)
-        
-        # --- 🧹 MÀNG LỌC DỌN RÁC (TIÊU DIỆT "OTHER" VÀ "UNKNOWN") ---
-        # Lệnh này sẽ tự động đá văng mọi cuộn thép không thuộc các năm 24, 25, 26 ra khỏi hệ thống
-        df = df[~df['Time_Group'].isin(["Other", "Unknown / No Date"])]
-        # -------------------------------------------------------------
+        df = df[~df['Time_Group'].isin(["Other", "Unknown"])]
     else:
         df['Time_Group'] = "Unknown"
 
-    # --- BỘ LỌC SIDEBAR THEO THỜI GIAN ---
+    # --- SIDEBAR FILTERS ---
     st.sidebar.header("🔎 Dashboard Filters")
     all_periods = sorted(df['Time_Group'].unique())
+    options_list = ["All"] + all_periods
     
-    # 1. Thêm lựa chọn "All (Tất cả)" lên đầu danh sách
-    options_list = ["All (Tất cả)"] + all_periods
+    ui_selection = st.sidebar.multiselect("📅 Select Period(s):", options=options_list, default=["All"])
     
-    # 2. Thiết lập hiển thị mặc định chỉ 1 tag duy nhất cho sang trọng
-    ui_selection = st.sidebar.multiselect(
-        "📅 Chọn giai đoạn (Periods):", 
-        options=options_list, 
-        default=["All (Tất cả)"]
-    )
-    
-    # 3. Logic xử lý "tàng hình"
-    if "All (Tất cả)" in ui_selection or len(ui_selection) == 0:
-        # Nếu chọn All (hoặc lỡ tay xóa hết tag), hệ thống ngầm hiểu là lấy toàn bộ
+    if "All" in ui_selection or len(ui_selection) == 0:
         selected_periods = all_periods
     else:
-        # Nếu chọn từng mốc cụ thể
         selected_periods = ui_selection
         df = df[df['Time_Group'].isin(selected_periods)]
 
-    # --- 🛡️ TRẠM GÁC ĐỘ DÀY (LỌC DỮ LIỆU RÁC) ---
-    standard_thickness = [0.5, 0.6, 0.75, 0.8]
+    # --- GET UNIQUE THICKNESS VALUES FROM '厚度' ---
     if '厚度' in df.columns:
-        # Giữ lại các dòng có độ dày chuẩn, loại bỏ các số lẻ tẻ gõ nhầm (vd: 0.63)
-        df = df[df['厚度'].isin(standard_thickness)]
         thickness_list = sorted(df['厚度'].dropna().unique(), key=lambda x: float(x))
     else:
         thickness_list = []
 
-    # Xử lý các cột Số lượng và Cơ tính
     count_cols = [col for col in ['A-B+數', 'A-B數', 'A-B-數', 'B+數', 'B數'] if col in df.columns]
     for col in count_cols: df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
     df['Total_Count'] = df[count_cols].sum(axis=1)
@@ -116,7 +98,7 @@ if uploaded_file is not None:
     mech_features = [feat for feat in ['YS', 'TS', 'EL', 'YPE', 'HARDNESS'] if feat in df.columns]
     for feat in mech_features: df[feat] = pd.to_numeric(df[feat], errors='coerce')
 
-    # --- CỐ ĐỊNH TRỤC X ---
+    # --- GLOBAL X-AXIS FIXATION ---
     global_x_bounds = {}
     for feat in mech_features:
         vd = df[[feat] + count_cols].dropna(subset=[feat]).copy()
@@ -146,9 +128,9 @@ if uploaded_file is not None:
 
     tab1, tab2, tab3 = st.tabs(["1. Yield Summary", "2. Distribution Analysis", "3. Control Limits & I-MR"])
 
-# --- TAB 1: YIELD ---
+    # --- TAB 1: YIELD SUMMARY ---
     with tab1:
-        st.header("1. Quality Yield Summary (Thick ➔ Material)")
+        st.header("1. Quality Yield Summary (Thickness ➔ Material)")
         group_cols = ['Time_Group', '厚度', '熱軋材質']
         existing_group_cols = [col for col in group_cols if col in df.columns]
         
@@ -172,24 +154,19 @@ if uploaded_file is not None:
             display_df = display_df[base_cols + grade_cols + pct_cols]
             if 'Period' in display_df.columns: display_df = display_df.sort_values(by=['Period', 'Thickness'])
             
-            # --- 🛠️ TÁCH BẢNG CHO TỪNG GIAI ĐOẠN (MỚI) ---
             for period in selected_periods:
                 period_data = display_df[display_df['Period'] == period]
                 if not period_data.empty:
-                    # Tạo tiêu đề to cho từng giai đoạn
-                    st.markdown(f"### 📅 Giai đoạn: **{period}**")
-                    # Hiển thị bảng và ẨN đi cột Period để tránh trùng lặp thông tin
+                    st.markdown(f"### 📅 Period: **{period}**")
                     st.dataframe(period_data.drop(columns=['Period'], errors='ignore'), use_container_width=True, hide_index=True)
             
             st.markdown("---")
-            # ----------------------------------------------
-            
             towrite_summary = io.BytesIO()
             display_df.to_excel(towrite_summary, index=False, engine='openpyxl')
             towrite_summary.seek(0)
             st.download_button("📥 Download Pivot Summary (Excel)", data=towrite_summary, file_name="Quality_Yield_Summary.xlsx")
 
-    # --- SHARED FUNCTIONS ---
+    # --- SHARED STATS FUNCTIONS ---
     def calculate_stats(v_arr, w_arr, k_factor):
         m_std = np.average(v_arr, weights=w_arr)
         s_std = np.sqrt(np.average((v_arr - m_std)**2, weights=w_arr))
@@ -253,7 +230,7 @@ if uploaded_file is not None:
             legend_elements = [Patch(facecolor=color_map[k], edgecolor='white', label=k.replace('數',''), alpha=0.5) for k in color_map]
             ax.legend(handles=legend_elements, title="Grade", title_fontsize='9', fontsize='8', bbox_to_anchor=(1.02, 1), loc='upper left')
 
-    # --- SETTINGS TẠI TAB 3 ---
+    # --- TAB 3 SETTINGS ---
     with tab3:
         st.markdown("##### ⚙️ Production Configuration")
         c1, c2, c3, c4 = st.columns(4)
@@ -265,14 +242,12 @@ if uploaded_file is not None:
     spec_limits = {"YS": (405, 500), "TS": (415, 550), "EL": (25, None), "YPE": (4, None)}
     good_cols = [c for c in ['A-B+數', 'A-B數'] if c in df.columns]
 
-    # --- LẶP THEO TRỤC THỜI GIAN ĐỂ VẼ TAB 2 VÀ TAB 3 ---
+    # --- ITERATE THROUGH PERIODS ---
     for period in selected_periods:
         df_p = df[df['Time_Group'] == period]
         if df_p.empty: continue
-        # Thay thế ký tự đặc biệt để làm tên file không bị lỗi
         safe_p = "".join([c if c.isalnum() else "_" for c in period])
 
-        # VẼ TAB 2 THEO PERIOD
         with tab2:
             st.markdown(f"## 📅 Time Period: **{period}**")
             st.subheader(f"🌐 Overall Factory Distribution ({period})")
@@ -302,7 +277,6 @@ if uploaded_file is not None:
                             fig.savefig(f"dist_{f}_{thick}_{safe_p}.png", bbox_inches='tight')
             st.markdown("---")
 
-        # VẼ TAB 3 THEO PERIOD
         with tab3:
             st.markdown(f"## 📅 Time Period: **{period}**")
             st.subheader(f"🌐 Overall Factory Goals ({period})")
