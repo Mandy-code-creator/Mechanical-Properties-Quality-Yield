@@ -197,77 +197,51 @@ if uploaded_file is not None:
         good_g = ['A-B+', 'A-B']
         bad_g = ['A-B-', 'B+', 'B']
         
-        # 3.1 HEATMAP % B (Điểm nóng chất lượng)
-        # Xác định rõ các cấp độ lỗi trong tiêu đề
-        defect_labels = ", ".join(bad_g) # Sẽ tạo ra chuỗi "A-B-, B+, B"
-        st.subheader(f"1. Heatmap: Tỷ lệ lỗi tổng hợp (%) - Các cấp độ: {defect_labels}")
+# 3.1 HEATMAP
+        defect_str = ", ".join(bad_grades)
+        st.subheader(f"1. Defect Hotspot Map (Defect Rate %: {defect_str})")
+        df_filtered['Bad_Qty'] = df_filtered[bad_grades].sum(axis=1)
+        df_filtered['Defect_Rate'] = (df_filtered['Bad_Qty'] / df_filtered['Total_Qty'] * 100).fillna(0)
+        df_filtered['Spec_Label'] = df_filtered['Actual_Thickness'].astype(str) + "mm (" + df_filtered['HR_Material'] + ")"
         
-        # Tính % lỗi (Grade B)
-        df_filtered['Bad_Qty'] = df_filtered[bad_g].sum(axis=1)
-        df_filtered['Pct_B'] = (df_filtered['Bad_Qty'] / df_filtered['Total_Qty'] * 100).fillna(0)
-        
-        # Tạo bảng pivot
-        df_filtered['Spec_Label'] = df_filtered['Actual_Thickness'].astype(str) + " (" + df_filtered['HR_Material'] + ")"
-        heat_data = df_filtered.groupby(['Spec_Label', 'Time_Group'])['Pct_B'].mean().unstack()
+        heat_data = df_filtered.groupby(['Spec_Label', 'Time_Group'])['Defect_Rate'].mean().unstack()
 
         if not heat_data.empty:
             fig, ax = plt.subplots(figsize=(12, 7))
-            import seaborn as sns
-            # Vẽ Heatmap
             sns.heatmap(heat_data, annot=True, fmt=".1f", cmap="YlOrRd", linewidths=.5, ax=ax)
-            
-            # CẬP NHẬT TIÊU ĐỀ CHI TIẾT Ở ĐÂY
-            ax.set_title(f"BIỂU ĐỒ ĐIỂM NÓNG: TỶ LỆ LỖI CẤP ĐỘ ({defect_labels})\n(Ô CÀNG ĐỎ = TỶ LỆ LỖI CÀNG CAO)", 
-                         fontsize=12, fontweight='bold', color='red', pad=20)
-            
-            ax.set_ylabel("Quy cách (Độ dày & Vật liệu)")
-            ax.set_xlabel("Giai đoạn sản xuất")
+            ax.set_title(f"HOTSPOT MAP: % DEFECT RATE ({defect_str})\n(Redder = Higher Defect Rate)", 
+                         fontsize=12, fontweight='bold', color='#d62728', pad=20)
+            ax.set_ylabel("Specification (Thickness & Material)")
+            ax.set_xlabel("Production Period")
             st.pyplot(fig); plt.close(fig)
-        # 3.2 PARETO CHART (Ưu tiên xử lý lỗi)
-        st.subheader("2. Pareto Chart: Các loại lỗi phổ biến nhất")
-        defect_sums = df_filtered[bad_g].sum().sort_values(ascending=False)
+
+        # 3.2 PARETO
+        st.subheader("2. Pareto Analysis: Top Defect Categories")
+        defect_sums = df_filtered[bad_grades].sum().sort_values(ascending=False)
         if defect_sums.sum() > 0:
             pareto_df = pd.DataFrame({'Count': defect_sums})
             pareto_df['Cum_Pct'] = pareto_df['Count'].cumsum() / pareto_df['Count'].sum() * 100
-            
             fig, ax1 = plt.subplots(figsize=(10, 5))
             ax1.bar(pareto_df.index, pareto_df['Count'], color="#d62728", alpha=0.8)
-            ax1.set_ylabel("Số lượng cuộn lỗi")
-            
+            ax1.set_ylabel("Number of Defective Coils")
             ax2 = ax1.twinx()
-            ax2.plot(pareto_df.index, pareto_df['Cum_Pct'], color="#1f77b4", marker="D", ms=5, lw=2)
-            ax2.axhline(80, color="orange", linestyle="--", label="80% Cut-off")
-            ax2.set_ylim(0, 110)
-            ax2.set_ylabel("Tỷ lệ tích lũy (%)")
-            
-            plt.title("Biểu đồ Pareto: Tập trung xử lý 80% nguồn lỗi")
+            ax2.plot(pareto_df.index, pareto_df['Cum_Pct'], color="#1f77b4", marker="D", ms=5)
+            ax2.axhline(80, color="orange", linestyle="--")
+            plt.title("Pareto Principle: Focusing on 80% of Quality Issues")
             st.pyplot(fig); plt.close(fig)
 
-        # 3.3 OVERLAY GOOD VS BAD (Chẩn đoán nguyên nhân cơ tính)
-        st.subheader("3. Overlay Analysis: So sánh Cơ tính Hàng Đạt vs Hàng Lỗi")
-        active_mechs = [f for f in ['YS', 'TS', 'EL', 'YPE'] if f in df_filtered.columns]
-        feat_diag = st.selectbox("Chọn chỉ số để chẩn đoán nguyên nhân:", active_mechs)
-        
+        # 3.3 OVERLAY
+        st.subheader("3. GOOD vs BAD Property Shift Analysis")
+        feat_diag = st.selectbox("Select property for diagnosis:", [f for f in ['YS', 'TS', 'EL', 'YPE'] if f in df_filtered.columns])
         fig, ax = plt.subplots(figsize=(10, 5))
-        # Lấy dữ liệu hàng đạt và hàng lỗi
-        good_vals = df_filtered[df_filtered[good_g].sum(axis=1) > 0][feat_diag].dropna()
-        bad_vals = df_filtered[df_filtered[bad_g].sum(axis=1) > 0][feat_diag].dropna()
-        
-        if not good_vals.empty:
-            sns.kdeplot(good_vals, ax=ax, label="HÀNG ĐẠT (A-B+, A-B)", fill=True, color="green", alpha=0.3)
-        if not bad_vals.empty:
-            sns.kdeplot(bad_vals, ax=ax, label="HÀNG LỖI (A-B-, B+, B)", fill=True, color="red", alpha=0.3)
-        
-        ax.set_title(f"Sự dịch chuyển cơ tính {feat_diag}: GOOD vs BAD")
+        g_vals = df_filtered[df_filtered[good_grades].sum(axis=1) > 0][feat_diag].dropna()
+        b_vals = df_filtered[df_filtered[bad_grades].sum(axis=1) > 0][feat_diag].dropna()
+        if not g_vals.empty:
+            sns.kdeplot(g_vals, ax=ax, label="GOOD (A-B+, A-B)", fill=True, color="green", alpha=0.3)
+        if not b_vals.empty:
+            sns.kdeplot(b_vals, ax=ax, label="BAD (A-B-, B+, B)", fill=True, color="red", alpha=0.3)
+        ax.set_title(f"Distribution Shift: {feat_diag} (Good vs Bad)")
         ax.legend()
-        st.pyplot(fig); plt.close(fig)
-        st.markdown("👉 **Mẹo đọc:** Nếu vùng **Đỏ** lệch hẳn sang phải/trái so với vùng **Xanh**, đó chính là nguyên nhân gây lỗi.")
-
-        # 3.4 BOXPLOT THEO THICKNESS
-        st.subheader("4. Phân tích độ biến động theo Độ dày")
-        fig, ax = plt.subplots(figsize=(10, 5))
-        sns.boxplot(data=df_filtered, x='Actual_Thickness', y=feat_diag, palette="Set2", ax=ax)
-        ax.set_title(f"Độ ổn định chỉ số {feat_diag} theo từng độ dày")
         st.pyplot(fig); plt.close(fig)
 
     # --- EXPORT SECTION ---
