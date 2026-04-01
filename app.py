@@ -1,23 +1,14 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
-import seaborn as sns
 import numpy as np
 import io
 from matplotlib.patches import Patch
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Quality Dashboard", layout="wide")
-st.title("📊 Production Quality Yield & Period Comparison")
+st.title("📊 Production Quality Yield & Distribution")
 st.markdown("---")
-
-# --- GLOBAL SPECS ---
-GLOBAL_SPECS = {
-    'YS': {'min': 400, 'max': 460, 'target': 430},
-    'TS': {'min': 410, 'max': 470, 'target': 440},
-    'EL': {'min': 25, 'max': None},
-    'YPE': {'min': 4, 'max': None}
-}
 
 uploaded_file = st.file_uploader("Upload Excel data (.xlsx)", type=["xlsx"])
 
@@ -26,6 +17,7 @@ if uploaded_file is not None:
     df.columns = df.columns.astype(str).str.strip()
 
     # --- 1. DATA EXTRACTION ---
+    # Prioritize 'Thickness' column, then try coordinate-based search
     if 'Thickness' in df.columns:
         df.rename(columns={'Thickness': 'Actual_Thickness'}, inplace=True)
     else:
@@ -74,6 +66,7 @@ if uploaded_file is not None:
     if '烤三生產日期' in df.columns:
         df['Time_Group'] = df['烤三生產日期'].apply(categorize_period)
         df = df[df['Time_Group'] != "Other"]
+        # Duplicate data for 2025 Full Year view
         df_25 = df[df['烤三生產日期'].dt.year == 2025].copy()
         if not df_25.empty:
             df_25['Time_Group'] = "2025 (Full Year)"
@@ -81,21 +74,27 @@ if uploaded_file is not None:
     else:
         df['Time_Group'] = "Unknown"
 
-    tab0, tab1, tab2, tab3 = st.tabs(["0. Raw Check", "1. Yield Summary", "2. Distribution Analysis", "3. Period Comparison"])
+    tab0, tab1, tab2 = st.tabs(["0. Raw Check", "1. Yield Summary", "2. Distribution Analysis"])
+
+    with tab0:
+        st.header("0. System Health Check")
+        st.write(f"**Total Valid Rows Loaded:** {len(df)}")
+        st.dataframe(df.head(10), use_container_width=True)
 
     # --- GLOBAL FILTERING ---
+    # Only keep the 4 standard thicknesses as per previous request
     df = df[df['Actual_Thickness'].isin([0.5, 0.6, 0.75, 0.8])]
-    st.sidebar.header("🔎 Filters")
+    
+    st.sidebar.header("🔎 Dashboard Filters")
     all_periods = sorted(df['Time_Group'].unique())
     ui_selection = st.sidebar.multiselect("📅 Select Period(s):", options=["All"] + all_periods, default=["All"])
     selected_periods = all_periods if ("All" in ui_selection or not ui_selection) else ui_selection
     df_filtered = df[df['Time_Group'].isin(selected_periods)]
     thickness_list = sorted(df['Actual_Thickness'].dropna().unique())
 
-    # --- TAB 2 LOGIC (WITH YPE) ---
+    # --- PLOT SETTINGS ---
     global_x_bounds = {}
-    target_plots = ['YS', 'TS', 'EL', 'YPE']
-    for feat in target_plots:
+    for feat in mech_features:
         if feat in df.columns:
             vd = df[[feat, 'Total_Qty']].dropna().copy()
             vd = vd[vd['Total_Qty'] > 0]
@@ -116,7 +115,7 @@ if uploaded_file is not None:
 
     def plot_dist(ax, data, feat, title, y_lim):
         c_map = {'A-B+': '#2ca02c', 'A-B': '#1f77b4', 'A-B-': '#ff7f0e', 'B+': '#9467bd', 'B': '#d62728'}
-        fmin, fmax = global_x_bounds.get(feat, (data[feat].min() if not data[feat].empty else 0, data[feat].max() if not data[feat].empty else 100))
+        fmin, fmax = global_x_bounds.get(feat, (data[feat].min(), data[feat].max()))
         v_l, w_l, clrs, m_info = [], [], [], []
         for g in base_grades:
             td = data[[feat, g]].dropna()
@@ -135,46 +134,51 @@ if uploaded_file is not None:
         ax.legend(handles=[Patch(facecolor=c_map[g], label=g) for g in base_grades if g in data.columns], loc='upper right', fontsize=7)
         ax.set_xlim(fmin, fmax); ax.set_ylim(0, y_lim); ax.set_title(title, fontsize=10, fontweight='bold')
 
-    with tab0: st.dataframe(df.head(5))
-    with tab1: st.write(df_filtered.groupby(['Time_Group', 'Actual_Thickness'])[base_grades].sum())
+    # --- TAB 1: YIELD ---
+    with tab1:
+        st.header("1. Quality Yield Summary")
+        g_cols = ['Time_Group', 'Actual_Thickness', 'HR_Material']
+        sum_df = df_filtered.groupby(g_cols, dropna=False)[base_grades].sum().reset_index()
+        sum_df['Total_Qty'] = sum_df[base_grades].sum(axis=1)
+        for col in base_grades: 
+            sum_df[f"% {col}"] = ((sum_df[col] / sum_df['Total_Qty'].replace(0, np.nan)) * 100).fillna(0).round(1)
+        sum_df.rename(columns={'Time_Group': 'Period', 'Actual_Thickness': 'Thickness'}, inplace=True)
+        for period in selected_periods:
+            p_data = sum_df[sum_df['Period'] == period]
+            if not p_data.empty:
+                st.markdown(f"### 📅 Period: **{period}**")
+                st.dataframe(p_data.drop(columns=['Period']), use_container_width=True, hide_index=True)
 
+    # --- TAB 2: DISTRIBUTION ---
     with tab2:
-        st.header("2. Distribution Analysis (Including YPE)")
+        st.header("2. Distribution Analysis")
         for period in selected_periods:
             df_p = df_filtered[df_filtered['Time_Group'] == period]
             if df_p.empty: continue
-            st.markdown(f"### 📅 Period: **{period}**")
-            ov_y = get_shared_y(df_p, target_plots)
+            st.markdown(f"## 📅 Period: **{period}**")
+            
+            # Overall for the period
+            ov_y = get_shared_y(df_p, ['YS', 'TS', 'EL', 'YPE'])
             cols = st.columns(2)
-            active_feats = [f for f in target_plots if f in df_p.columns]
-            for idx, f in enumerate(active_feats):
+            for idx, f in enumerate([x for x in ['YS', 'TS', 'EL', 'YPE'] if x in df_p.columns]):
                 with cols[idx%2]:
                     fig, ax = plt.subplots(figsize=(8, 4.5))
                     plot_dist(ax, df_p, f, f"{f} (Overall)", ov_y)
                     st.pyplot(fig); plt.close(fig)
-
-    # --- TAB 3: SIDE-BY-SIDE (INCLUDING YPE) ---
-    with tab3:
-        st.header("3. Period Comparison (Including YPE)")
-        for thick in thickness_list:
-            df_t = df_filtered[df_filtered['Actual_Thickness'] == thick]
-            if df_t.empty: continue
-            st.subheader(f"📏 Thickness: {thick} mm")
-            comp_cols = st.columns(2)
-            active_comp = [f for f in target_plots if f in df_t.columns]
-            for idx, f in enumerate(active_comp):
-                with comp_cols[idx % 2]:
-                    fig, ax = plt.subplots(figsize=(10, 6))
-                    sns.boxplot(data=df_t, x='Time_Group', y=f, palette="Set2", ax=ax)
-                    if f in GLOBAL_SPECS:
-                        s = GLOBAL_SPECS[f]
-                        if s.get('min') and s.get('max'):
-                            ax.axhspan(s['min'], s['max'], color='green', alpha=0.1, label='Target Zone')
-                        elif s.get('min'):
-                            ax.axhline(s['min'], color='red', ls='--', alpha=0.5, label='Min Spec')
-                    ax.set_title(f"{f} Comparison across Periods")
-                    plt.xticks(rotation=15)
-                    st.pyplot(fig); plt.close(fig)
+            
+            # Detailed by Thickness
+            for thick in thickness_list:
+                df_t = df_p[df_p['Actual_Thickness'] == thick]
+                if df_t.empty: continue
+                st.markdown(f"**📏 Thickness: {thick}**")
+                ly = get_shared_y(df_t, ['YS', 'TS', 'EL', 'YPE'])
+                tcols = st.columns(2)
+                for idx, f in enumerate([x for x in ['YS', 'TS', 'EL', 'YPE'] if x in df_t.columns]):
+                    with tcols[idx%2]:
+                        fig, ax = plt.subplots(figsize=(8, 4.5))
+                        plot_dist(ax, df_t, f, f"{f} (Thick: {thick})", ly)
+                        st.pyplot(fig); plt.close(fig)
+            st.markdown("---")
     # --- EXPORT SECTION ---
     st.sidebar.header("📥 Export Options")
     if st.sidebar.button("Download Detailed Excel"):
