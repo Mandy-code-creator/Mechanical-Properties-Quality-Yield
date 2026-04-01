@@ -350,7 +350,7 @@ if uploaded_file is not None:
         st.header("📈 Task 4: I-MR Stability Tracking (Chronological)")
         st.info("Analysis based on production date from 2024 to 2026. Red dots = Out of Spec.")
 
-        # Filters for Task 5
+        # Filters for Task 4
         imr_thicks = sorted(df_filtered['Actual_Thickness'].dropna().unique())
         imr_mats = sorted(df_filtered['HR_Material'].astype(str).unique())
         
