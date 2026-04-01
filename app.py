@@ -238,75 +238,52 @@ if uploaded_file is not None:
                         plot_dist(ax, df_t, f, f"{f} (Thick: {thick})", ly)
                         st.pyplot(fig); plt.close(fig)
 
-# --- TAB 3: DIAGNOSTIC FLOW (OPTIMIZED TIMELINE) ---
+# --- TAB 3: DIAGNOSTIC FLOW (HEATMAP ONLY) ---
     with tab3:
-        st.header("🔍 Quality Diagnostic & Global Stability Flow")
-        st.info("Global analysis of production defects and continuous time-series stability.")
+        st.header("🔍 Quality Diagnostic: Defect Hotspot Analysis")
+        st.info("Focusing exclusively on severe defects (B+ and B) to identify critical production issues.")
         
-        # Define Global Specs for Highlighting
-        GLOBAL_SPECS = {
-            'YS': {'min': 400, 'max': 460, 'target': 430},
-            'TS': {'min': 410, 'max': 470, 'target': 440},
-            'EL': {'min': 25, 'max': None, 'target': None},
-            'YPE': {'min': 4, 'max': None, 'target': None}
-        }
+        # --- HEATMAP (CHỈ TÍNH LỖI B+ TRỞ XUỐNG) ---
+        heatmap_bad_grades = ['B+', 'B']
+        defect_str = ", ".join(heatmap_bad_grades)
+        st.subheader(f"Defect Hotspot Map (Severe Defect Rate: {defect_str})")
         
-        # --- STEP 1: HEATMAP (OPTIMIZED WEIGHTED AVERAGE) ---
-        defect_str = ", ".join(bad_grades)
-        st.subheader(f"Step 1: Defect Hotspot Map (% Rate: {defect_str})")
-        
-        # Nhãn quy cách
         df_filtered['Spec_Label'] = df_filtered['Actual_Thickness'].astype(str) + "mm (" + df_filtered['HR_Material'] + ")"
         
-        # THUẬT TOÁN ĐÚNG: Tính Weighted Average cho từng nhóm Spec + Time
+        # Tạo cột đếm lỗi riêng cho Heatmap
+        df_filtered['Heatmap_Bad_Qty'] = df_filtered[heatmap_bad_grades].sum(axis=1)
+        
+        # THUẬT TOÁN: Tính Weighted Average CHỈ CHO B+ VÀ B
         heat_data = df_filtered.groupby(['Spec_Label', 'Time_Group']).apply(
-            lambda x: (x['Bad_Qty'].sum() / x['Total_Qty'].sum() * 100) if x['Total_Qty'].sum() > 0 else 0
+            lambda x: (x['Heatmap_Bad_Qty'].sum() / x['Total_Qty'].sum() * 100) if x['Total_Qty'].sum() > 0 else 0
         ).unstack()
 
         if not heat_data.empty:
             fig, ax = plt.subplots(figsize=(12, 6))
-            import seaborn as sns
-            
-            # Đặt vmax (ví dụ 30%) để làm nổi bật sự tương phản màu sắc
-            # Ô nào > 30% sẽ đỏ đậm max level
             vmax_threshold = 30.0 if heat_data.max().max() > 30 else heat_data.max().max()
-            
+            import seaborn as sns
             sns.heatmap(heat_data, annot=True, fmt=".1f", cmap="YlOrRd", linewidths=.5, vmax=vmax_threshold, ax=ax)
-            ax.set_title(f"HOTSPOT MAP: ACTUAL DEFECT RATE ({defect_str})", fontsize=12, fontweight='bold', color='#d62728', pad=15)
-            ax.set_ylabel("Specification (Thickness & Material)")
+            ax.set_title(f"HOTSPOT MAP: SEVERE DEFECT RATE ({defect_str})", fontsize=12, fontweight='bold', color='#d62728', pad=15)
+            ax.set_ylabel("Specification")
             ax.set_xlabel("Production Period")
-            st.pyplot(fig); plt.close(fig)
+            fig.tight_layout()
             
-            # --- AUTO DETECT TOP 3 HOTSPOTS ---
+            # LƯU ẢNH HEATMAP ĐỂ XUẤT PDF
+            plt.savefig("export_heatmap.png", bbox_inches='tight', dpi=150)
+            st.pyplot(fig); plt.close(fig)
+
+            # --- AUTO DETECT TOP 3 HOTSPOTS (B+, B) ---
             st.markdown("### 🚨 Top 3 Critical Hotspots (Action Required)")
-            # Biến đổi bảng heatmap thành dạng cột để dễ sort
             stacked_data = heat_data.stack().reset_index()
             stacked_data.columns = ['Spec', 'Period', 'Defect_Rate']
             top_3 = stacked_data[stacked_data['Defect_Rate'] > 0].sort_values(by='Defect_Rate', ascending=False).head(3)
             
             if not top_3.empty:
                 for idx, row in top_3.iterrows():
-                    # Cảnh báo màu đỏ cho lỗi > 15%, màu cam cho lỗi > 5%
                     alert_color = "🔴" if row['Defect_Rate'] > 15 else "🟠"
-                    st.error(f"{alert_color} **{row['Spec']}** during **{row['Period']}**: Defect Rate hits **{row['Defect_Rate']:.1f}%**")
+                    st.error(f"{alert_color} **{row['Spec']}** during **{row['Period']}**: Severe Defect Rate hits **{row['Defect_Rate']:.1f}%**")
             else:
-                st.success("✅ Quy trình đang ổn định. Không phát hiện điểm nóng.")
-
-        # --- STEP 2: PARETO ---
-        st.markdown("---")
-        st.subheader("Step 2: Defect Category Breakdown (Pareto)")
-        defect_sums = df_filtered[bad_grades].sum().sort_values(ascending=False)
-        if defect_sums.sum() > 0:
-            pareto_df = pd.DataFrame({'Count': defect_sums})
-            pareto_df['Cum_Pct'] = pareto_df['Count'].cumsum() / pareto_df['Count'].sum() * 100
-            
-            fig, ax1 = plt.subplots(figsize=(10, 4))
-            ax1.bar(pareto_df.index, pareto_df['Count'], color="#d62728", alpha=0.8)
-            ax2 = ax1.twinx()
-            ax2.plot(pareto_df.index, pareto_df['Cum_Pct'], color="#1f77b4", marker="D", ms=5)
-            ax2.axhline(80, color="orange", linestyle="--")
-            plt.title("Pareto Principle: Focus on 80% of Quality Issues")
-            st.pyplot(fig); plt.close(fig)
+                st.success("✅ Process is stable. No critical severe hotspots detected.")
 
         # --- STEP 3: GLOBAL TIMELINE I-MR CHARTS ---
         st.markdown("---")
