@@ -8,6 +8,7 @@ from fpdf import FPDF
 import os
 from matplotlib.patches import Patch
 
+# --- PAGE CONFIG ---
 st.set_page_config(page_title="QC Yield & Control Limit", layout="wide")
 st.title("📊 Quality Yield & Control Limit Optimizer")
 st.markdown("---")
@@ -18,7 +19,7 @@ if uploaded_file is not None:
     df = pd.read_excel(uploaded_file)
     df.columns = df.columns.astype(str).str.strip()
 
-    # --- 1. THICKNESS EXTRACTION ---
+    # --- 1. DATA EXTRACTION (Thickness & Dates) ---
     if 'Thickness' in df.columns:
         df.rename(columns={'Thickness': 'Actual_Thickness'}, inplace=True)
     else:
@@ -30,19 +31,17 @@ if uploaded_file is not None:
     if 'Actual_Thickness' in df.columns:
         df['Actual_Thickness'] = pd.to_numeric(df['Actual_Thickness'], errors='coerce').round(3)
 
-    # --- 2. DATE PARSING ---
     if '烤三生產日期' in df.columns:
         d_str = df['烤三生產日期'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
         df['烤三生產日期'] = pd.to_datetime(d_str, format='%Y%m%d', errors='coerce').fillna(pd.to_datetime(d_str, errors='coerce'))
 
-    # --- 3. GRADE COLUMNS MERGING ---
+    # --- 2. GRADE & MECH FEATURES ---
     base_grades = ['A-B+', 'A-B', 'A-B-', 'B+', 'B']
     for g in base_grades:
         match_cols = [c for c in df.columns if c == g or str(c).startswith(f"{g}.")]
         df[g] = df[match_cols].apply(pd.to_numeric, errors='coerce').fillna(0).sum(axis=1) if match_cols else 0
     df['Total_Qty'] = df[base_grades].sum(axis=1)
 
-    # --- 4. MECH FEATURES & MATERIAL ---
     df.rename(columns={'烤漆降伏強度': 'YS', '烤漆抗拉強度': 'TS', '伸長率': 'EL'}, inplace=True)
     mech_features = ['YS', 'TS', 'EL', 'YPE', 'HARDNESS']
     for f in mech_features:
@@ -53,7 +52,7 @@ if uploaded_file is not None:
     else:
         df['HR_Material'] = 'Unknown'
 
-    # --- 5. TIME GROUPS ---
+    # --- 3. TIME PERIOD LOGIC ---
     def categorize_period(d):
         if pd.isnull(d): return "Unknown"
         y = d.year
@@ -78,17 +77,16 @@ if uploaded_file is not None:
 
     tab0, tab1, tab2, tab3 = st.tabs(["0. Raw Data Check", "1. Yield Summary", "2. Distribution", "3. Control Limits & I-MR"])
 
+    # --- TAB 0 ---
     with tab0:
-        st.header("0. System Health & Raw Data Check")
+        st.header("0. System Health Check")
         c1, c2, c3 = st.columns(3)
-        c1.metric("Total Rows", len(df))
-        c2.write("**Thickness:**")
-        c2.write(df['Actual_Thickness'].value_counts().dropna().to_dict())
-        c3.write("**Periods:**")
-        c3.write(df['Time_Group'].value_counts().to_dict())
-        st.dataframe(df.head(20), use_container_width=True)
+        c1.metric("Valid Rows", len(df))
+        c2.write("**Thickness Found:**"); c2.write(df['Actual_Thickness'].value_counts().dropna().to_dict())
+        c3.write("**Periods Found:**"); c3.write(df['Time_Group'].value_counts().to_dict())
+        st.dataframe(df.head(10), use_container_width=True)
 
-    # FILTERING
+    # --- FILTERING ---
     df = df[df['Actual_Thickness'].isin([0.5, 0.6, 0.75, 0.8])]
     st.sidebar.header("🔎 Filters")
     all_periods = sorted(df['Time_Group'].unique())
@@ -97,45 +95,27 @@ if uploaded_file is not None:
     df = df[df['Time_Group'].isin(selected_periods)]
     thickness_list = sorted(df['Actual_Thickness'].dropna().unique())
 
-    # --- GLOBAL BOUNDS ---
+    # --- SHARED FUNCTIONS ---
     global_x_bounds = {}
     for feat in mech_features:
         if feat in df.columns:
-            vd = df[[feat] + base_grades].dropna(subset=[feat]).copy()
-            vd['T_Count'] = vd[base_grades].sum(axis=1)
-            vd = vd[vd['T_Count'] > 0]
+            vd = df[[feat, 'Total_Qty']].dropna().copy()
+            vd = vd[vd['Total_Qty'] > 0]
             if not vd.empty:
                 q1, q99 = np.percentile(vd[feat], 1), np.percentile(vd[feat], 99)
-                fmin, fmax = q1 - (q99-q1)*0.2, q99 + (q99-q1)*0.2
-                global_x_bounds[feat] = (fmin, fmax)
+                global_x_bounds[feat] = (q1 - (q99-q1)*0.25, q99 + (q99-q1)*0.25)
 
     def get_shared_y(data, features):
         max_y = 0
         for feat in features:
             if feat in data.columns:
-                vd = data.dropna(subset=[feat]).copy()
-                vd['T_Count'] = vd[base_grades].sum(axis=1)
+                vd = data.dropna(subset=[feat])
                 if not vd.empty:
                     fmin, fmax = global_x_bounds.get(feat, (vd[feat].min(), vd[feat].max()))
-                    cnts, _ = np.histogram(vd[feat], bins=np.linspace(fmin, fmax, 16), weights=vd['T_Count'])
+                    cnts, _ = np.histogram(vd[feat], bins=np.linspace(fmin, fmax, 16), weights=vd['Total_Qty'])
                     max_y = max(max_y, cnts.max())
-        return max_y * 1.3 if max_y > 0 else 50
+        return max_y * 1.35 if max_y > 0 else 50
 
-    # --- TAB 1: YIELD ---
-    with tab1:
-        st.header("1. Quality Yield Summary")
-        group_cols = ['Time_Group', 'Actual_Thickness', 'HR_Material']
-        sum_df = df.groupby(group_cols, dropna=False)[base_grades].sum().reset_index()
-        sum_df['Total_Qty'] = sum_df[base_grades].sum(axis=1)
-        for col in base_grades: sum_df[f"% {col}"] = ((sum_df[col] / sum_df['Total_Qty'].replace(0, np.nan)) * 100).fillna(0).round(1)
-        sum_df.rename(columns={'Time_Group': 'Period', 'Actual_Thickness': 'Thickness'}, inplace=True)
-        for period in selected_periods:
-            p_data = sum_df[sum_df['Period'] == period]
-            if not p_data.empty:
-                st.markdown(f"### 📅 Period: **{period}**")
-                st.dataframe(p_data.drop(columns=['Period']), use_container_width=True, hide_index=True)
-
-    # --- TAB 2 & 3 CORE ---
     def calc_stats(v, w, k):
         m_s = np.average(v, weights=w)
         s_s = np.sqrt(np.average((v - m_s)**2, weights=w))
@@ -150,26 +130,40 @@ if uploaded_file is not None:
 
     def plot_dist(ax, data, feat, title, y_lim):
         c_map = {'A-B+': '#2ca02c', 'A-B': '#1f77b4', 'A-B-': '#ff7f0e', 'B+': '#9467bd', 'B': '#d62728'}
-        f_min, f_max = global_x_bounds.get(feat, (data[feat].min(), data[feat].max()))
-        v_list, w_list, colors, mean_info = [], [], [], []
+        fmin, fmax = global_x_bounds.get(feat, (data[feat].min(), data[feat].max()))
+        v_l, w_l, clrs, m_info = [], [], [], []
         for g in base_grades:
             td = data[[feat, g]].dropna()
             td = td[td[g] > 0]
             if not td.empty:
-                v, w = td[feat].values, td[g].values
-                v_list.append(v); w_list.append(w); colors.append(c_map[g])
-                m = np.average(v, weights=w)
+                v_l.append(td[feat].values); w_l.append(td[g].values); clrs.append(c_map[g])
+                m = np.average(td[feat].values, weights=td[g].values)
                 ax.axvline(m, color=c_map[g], ls='--', lw=1.2)
-                mean_info.append({'v': m, 'c': c_map[g]})
-        if v_list:
-            ax.hist(v_list, bins=np.linspace(f_min, f_max, 16), weights=w_list, color=colors, stacked=True, edgecolor='white', alpha=0.7)
-            # --- KHÔI PHỤC MEAN LABELS TẠI ĐÂY ---
-            mean_info.sort(key=lambda x: x['v'])
-            for i, info in enumerate(mean_info):
-                h = y_lim * (0.9 - (i % 3) * 0.1)
+                m_info.append({'v': m, 'c': c_map[g]})
+        if v_l:
+            ax.hist(v_l, bins=np.linspace(fmin, fmax, 16), weights=w_l, color=clrs, stacked=True, edgecolor='white', alpha=0.7)
+            m_info.sort(key=lambda x: x['v'])
+            for i, info in enumerate(m_info):
+                h = y_lim * (0.85 - (i % 3) * 0.12)
                 ax.text(info['v'], h, f"{info['v']:.1f}", color='white', fontweight='bold', fontsize=8, ha='center', bbox=dict(facecolor=info['c'], alpha=0.8, boxstyle='round,pad=0.2'))
-        ax.set_xlim(f_min, f_max); ax.set_ylim(0, y_lim); ax.set_title(title, fontsize=9, fontweight='bold')
+        ax.legend(handles=[Patch(facecolor=c_map[g], label=g) for g in base_grades if g in data.columns], loc='upper right', fontsize=7)
+        ax.set_xlim(fmin, fmax); ax.set_ylim(0, y_lim); ax.set_title(title, fontsize=9, fontweight='bold')
 
+    # --- TAB 1 ---
+    with tab1:
+        st.header("1. Quality Yield Summary")
+        g_cols = ['Time_Group', 'Actual_Thickness', 'HR_Material']
+        sum_df = df.groupby(g_cols, dropna=False)[base_grades].sum().reset_index()
+        sum_df['Total_Qty'] = sum_df[base_grades].sum(axis=1)
+        for col in base_grades: sum_df[f"% {col}"] = ((sum_df[col] / sum_df['Total_Qty'].replace(0, np.nan)) * 100).fillna(0).round(1)
+        sum_df.rename(columns={'Time_Group': 'Period', 'Actual_Thickness': 'Thickness'}, inplace=True)
+        for period in selected_periods:
+            p_data = sum_df[sum_df['Period'] == period]
+            if not p_data.empty:
+                st.markdown(f"### 📅 Period: **{period}**")
+                st.dataframe(p_data.drop(columns=['Period']), use_container_width=True, hide_index=True)
+
+    # --- TAB 3 SETTINGS ---
     with tab3:
         st.markdown("##### ⚙️ Production Settings")
         c1, c2, c3, c4 = st.columns(4)
@@ -178,9 +172,11 @@ if uploaded_file is not None:
         iqr_k = c3.number_input("IQR Filter (k)", value=1.5)
         chart_m = c4.radio("I-MR Based On:", ["Standard", "IQR Filtered"])
 
+    # --- CORE LOOP FOR TABS 2 & 3 ---
     for period in selected_periods:
         df_p = df[df['Time_Group'] == period]
         if df_p.empty: continue
+        
         with tab2:
             st.markdown(f"## 📅 Period: **{period}**")
             ov_y = get_shared_y(df_p, ['YS', 'TS', 'EL', 'YPE'])
@@ -201,12 +197,15 @@ if uploaded_file is not None:
                         fig, ax = plt.subplots(figsize=(7, 4))
                         plot_dist(ax, df_t, f, f"{f} (Thick: {thick})", ly)
                         st.pyplot(fig); plt.close(fig)
+
         with tab3:
             st.markdown(f"## 📅 Period: **{period}**")
             for thick in thickness_list:
                 df_t = df_p[df_p['Actual_Thickness'] == thick]
                 if df_t.empty: continue
                 st.markdown(f"**📏 Thickness: {thick}**")
+                
+                # --- KHÔI PHỤC PHẦN TÍNH TOÁN GIỚI HẠN ---
                 p_data, p_dict = [], {}
                 for f in [x for x in ['YS', 'TS', 'EL', 'YPE'] if x in df_t.columns]:
                     tc = df_t[[f, 'A-B+', 'A-B']].dropna()
@@ -217,10 +216,16 @@ if uploaded_file is not None:
                         curr_m, curr_s = (ms, ss) if chart_m == "Standard" else (mi, si)
                         p_dict[f] = {'v': tc[f].values, 'm': curr_m, 's': curr_s}
                         for n, mv, sv in [("Standard", ms, ss), ("IQR Filtered", mi, si)]:
-                            p_data.append({"Feature": f if n=="Standard" else "", "Method": n, "TARGET": int(round(mv)), "TOL": int(round(sv)), 
-                                           f"MILL {sig_mil}σ": f"{max(0,int(round(mv-sig_mil*sv)))}-{int(round(mv+sig_mil*sv))}",
-                                           f"RELEASE {sig_rel}σ": f"{max(0,int(round(mv-sig_rel*sv)))}-{int(round(mv+sig_rel*sv))}"})
+                            p_data.append({
+                                "Feature": f if n=="Standard" else "", "Method": n, 
+                                "TARGET": int(round(mv)), "TOLERANCE": int(round(sv)), 
+                                f"MILL {sig_mil}σ": f"{max(0,int(round(mv-sig_mil*sv)))}-{int(round(mv+sig_mil*sv))}",
+                                f"RELEASE {sig_rel}σ": f"{max(0,int(round(mv-sig_rel*sv)))}-{int(round(mv+sig_rel*sv))}"
+                            })
+                
                 if p_data: st.dataframe(pd.DataFrame(p_data), use_container_width=True, hide_index=True)
+                
+                # --- KHÔI PHỤC BIỂU ĐỒ I-MR ---
                 imr_c = st.columns(2)
                 for idx, f in enumerate(p_dict):
                     with imr_c[idx%2]:
@@ -228,9 +233,13 @@ if uploaded_file is not None:
                         if len(d['v']) > 1:
                             fig, (a1, a2) = plt.subplots(2, 1, figsize=(7, 5), gridspec_kw={'height_ratios': [2, 1]})
                             u, l = d['m']+sig_rel*d['s'], max(0, d['m']-sig_rel*d['s'])
-                            a1.plot(d['v'], marker='o', ms=3, lw=1); a1.axhline(d['m'], color='g', ls='--'); a1.axhline(u, color='r', ls=':'); a1.axhline(l, color='r', ls=':')
-                            a1.set_title(f"I-Chart: {f}", fontsize=9); mr = np.abs(np.diff(d['v']))
-                            a2.plot(mr, marker='o', ms=3, lw=1, color='orange'); a2.axhline(np.mean(mr), color='g', ls='--'); a2.axhline(3.267*np.mean(mr), color='r', ls=':')
+                            a1.plot(d['v'], marker='o', ms=3, lw=1, color='#1f77b4')
+                            a1.axhline(d['m'], color='g', ls='--'); a1.axhline(u, color='r', ls=':'); a1.axhline(l, color='r', ls=':')
+                            a1.set_title(f"I-Chart: {f}", fontsize=9)
+                            mr = np.abs(np.diff(d['v']))
+                            a2.plot(mr, marker='o', ms=3, lw=1, color='orange')
+                            a2.axhline(np.mean(mr), color='g', ls='--'); a2.axhline(3.267*np.mean(mr), color='r', ls=':')
+                            a2.set_title("Moving Range", fontsize=8)
                             fig.tight_layout(); st.pyplot(fig); plt.close(fig)
             st.markdown("---")
 
