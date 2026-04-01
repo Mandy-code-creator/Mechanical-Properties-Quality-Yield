@@ -6,43 +6,42 @@ import scipy.stats as stats
 import io
 from fpdf import FPDF
 import os
-import datetime
 from matplotlib.patches import Patch
 
-# --- PAGE CONFIGURATION ---
-st.set_page_config(page_title="QC Yield & Control Limit Optimizer", layout="wide")
-
+st.set_page_config(page_title="QC Yield & Control Limit", layout="wide")
 st.title("📊 Quality Yield & Control Limit Optimizer")
 st.markdown("---")
 
-# --- 1. MAIN APP EXECUTION ---
 uploaded_file = st.file_uploader("Upload Excel data (.xlsx)", type=["xlsx"])
 
 if uploaded_file is not None:
-    # Read raw data
-    raw_df = pd.read_excel(uploaded_file)
-    df = raw_df.copy()
-    df.columns = df.columns.str.strip() 
+    df = pd.read_excel(uploaded_file)
+    df.columns = df.columns.astype(str).str.strip()
 
-    # --- 1. ROBUST THICKNESS COLUMN LOCATOR ---
-    thickness_col_name = None
+    # --- 1. THICKNESS EXTRACTION ---
+    # Prioritize the explicitly renamed 'Thickness' column
     if 'Thickness' in df.columns:
-        thickness_col_name = 'Thickness'
+        df.rename(columns={'Thickness': 'Actual_Thickness'}, inplace=True)
     else:
-        # Search for '厚度' that is exactly one column before '型式'
-        cols = list(df.columns)
-        for i, c in enumerate(cols):
-            if '厚度' in str(c) and i + 1 < len(cols) and '型式' in str(cols[i+1]):
-                thickness_col_name = c
+        # Fallback if 'Thickness' is not found
+        for i, c in enumerate(df.columns):
+            if '型式' in c and i > 0:
+                df.rename(columns={df.columns[i-1]: 'Actual_Thickness'}, inplace=True)
                 break
-        # Fallback
-        if not thickness_col_name and '厚度' in df.columns:
-            thickness_col_name = '厚度'
+        if 'Actual_Thickness' not in df.columns and '厚度' in df.columns:
+            df.rename(columns={'厚度': 'Actual_Thickness'}, inplace=True)
 
-    if thickness_col_name:
-        df.rename(columns={thickness_col_name: 'Actual_Thickness'}, inplace=True)
+    if 'Actual_Thickness' in df.columns:
+        df['Actual_Thickness'] = pd.to_numeric(df['Actual_Thickness'], errors='coerce').round(3)
+    else:
+        df['Actual_Thickness'] = np.nan
 
-    # --- 2. MULTI-COLUMN MERGE FOR QUALITY GRADES (e.g. A-B+ and A-B+.1) ---
+    # --- 2. DATE PARSING ---
+    if '烤三生產日期' in df.columns:
+        d_str = df['烤三生產日期'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+        df['烤三生產日期'] = pd.to_datetime(d_str, format='%Y%m%d', errors='coerce').fillna(pd.to_datetime(d_str, errors='coerce'))
+
+    # --- 3. GRADE COLUMNS MERGING ---
     base_grades = ['A-B+', 'A-B', 'A-B-', 'B+', 'B']
     for g in base_grades:
         match_cols = [c for c in df.columns if c == g or str(c).startswith(f"{g}.")]
@@ -50,42 +49,24 @@ if uploaded_file is not None:
             df[g] = df[match_cols].apply(pd.to_numeric, errors='coerce').fillna(0).sum(axis=1)
         else:
             df[g] = 0
+    df['Total_Qty'] = df[base_grades].sum(axis=1)
 
-    # --- 3. VECTORIZED DATE PARSING (EXPLICIT YYYYMMDD) ---
-    if '烤三生產日期' in df.columns:
-        d_str = df['烤三生產日期'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
-        parsed_dates = pd.to_datetime(d_str, format='%Y%m%d', errors='coerce')
-        df['烤三生產日期'] = parsed_dates.fillna(pd.to_datetime(d_str, errors='coerce'))
-
-    # --- 4. MATERIAL & MECHANICAL FEATURES ---
-    if '熱軋材質' in df.columns:
-        df['熱軋材質'] = df['熱軋材質'].astype(str).str.strip().replace(['nan', ''], 'Unknown')
-    else:
-        df['熱軋材質'] = 'Unknown'
-
-    rename_mech = {'烤漆降伏強度': 'YS', '烤漆抗拉強度': 'TS', '伸長率': 'EL'}
-    df.rename(columns=rename_mech, inplace=True)
+    # --- 4. MECH FEATURES & MATERIAL ---
+    df.rename(columns={'烤漆降伏強度': 'YS', '烤漆抗拉強度': 'TS', '伸長率': 'EL'}, inplace=True)
     mech_features = ['YS', 'TS', 'EL', 'YPE', 'HARDNESS']
     for f in mech_features:
-        if f in df.columns:
-            df[f] = pd.to_numeric(df[f], errors='coerce')
+        if f in df.columns: df[f] = pd.to_numeric(df[f], errors='coerce')
 
-    if '年度' in df.columns:
-        df['年度'] = df['年度'].astype(str).str.replace(r'\.0$', '', regex=True)
+    if '熱軋材質' in df.columns:
+        df['HR_Material'] = df['熱軋材質'].astype(str).str.strip().replace(['nan', ''], 'Unknown')
+    else:
+        df['HR_Material'] = 'Unknown'
 
-    # --- 5. STRICT WHITELIST FILTER FOR THICKNESS ---
-    if 'Actual_Thickness' in df.columns:
-        df['Actual_Thickness'] = pd.to_numeric(df['Actual_Thickness'], errors='coerce').round(3)
-        # Keep only these strictly
-        df = df[df['Actual_Thickness'].isin([0.5, 0.6, 0.75, 0.8])]
-
-    # --- 6. CATEGORIZE PERIODS ---
+    # --- 5. TIME GROUPS ---
     def categorize_period(d):
         if pd.isnull(d): return "Unknown"
         y = d.year
-        q3_s = pd.Timestamp(2025, 6, 29)
-        q3_e = pd.Timestamp(2025, 9, 30)
-        
+        q3_s, q3_e = pd.Timestamp(2025, 6, 29), pd.Timestamp(2025, 9, 30)
         if y == 2024: return "2024 (Full Year)"
         if y == 2025:
             if d < q3_s: return "2025 H1 (Until 06/28)"
@@ -96,41 +77,41 @@ if uploaded_file is not None:
 
     if '烤三生產日期' in df.columns:
         df['Time_Group'] = df['烤三生產日期'].apply(categorize_period)
-        df = df[df['Time_Group'] != "Other"]
+    else:
+        df['Time_Group'] = "Unknown"
+
+    # ==========================================
+    # TAB 0: RAW DATA CHECK (BEFORE FILTERING)
+    # ==========================================
+    tab0, tab1, tab2, tab3 = st.tabs(["0. Raw Data Check", "1. Yield Summary", "2. Distribution", "3. Control Limits & I-MR"])
+
+    with tab0:
+        st.header("0. System Health & Raw Data Check")
+        st.info("Showing parsed data BEFORE removing any invalid thicknesses or periods.")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Total Rows Read", len(df))
+        c2.write("**Thickness Found:**")
+        c2.write(df['Actual_Thickness'].value_counts().dropna().to_dict())
+        c3.write("**Periods Found:**")
+        c3.write(df['Time_Group'].value_counts().to_dict())
         
-        # Virtual 2025 Full Year
+        preview_cols = ['烤三生產日期', 'Time_Group', 'Actual_Thickness', 'HR_Material', 'Total_Qty'] + base_grades + [f for f in mech_features if f in df.columns]
+        exist_preview = [c for c in preview_cols if c in df.columns]
+        st.dataframe(df[exist_preview].head(30), use_container_width=True)
+
+    # ==========================================
+    # APPLY STRICT FILTERS & VIRTUAL DATA
+    # ==========================================
+    df = df[df['Actual_Thickness'].isin([0.5, 0.6, 0.75, 0.8])]
+    df = df[df['Time_Group'] != "Other"]
+
+    if '烤三生產日期' in df.columns:
         df_25 = df[df['烤三生產日期'].dt.year == 2025].copy()
         if not df_25.empty:
             df_25['Time_Group'] = "2025 (Full Year)"
             df = pd.concat([df, df_25], ignore_index=True)
-    else:
-        df['Time_Group'] = "Unknown"
 
-    df['Total_Qty'] = df[base_grades].sum(axis=1)
-
-    # ==========================================
-    # UI TABS GENERATION
-    # ==========================================
-    tab0, tab1, tab2, tab3 = st.tabs(["0. Raw Data Check", "1. Yield Summary", "2. Distribution Analysis", "3. Control Limits & I-MR"])
-
-    # --- TAB 0: RAW DATA CHECK (For Debugging) ---
-    with tab0:
-        st.header("0. System Health & Raw Data Check")
-        st.info("Use this tab to verify if the system has correctly extracted the thickness and periods.")
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Total Valid Rows", len(df))
-        if 'Actual_Thickness' in df.columns:
-            c2.write("**Thickness Count:**")
-            c2.write(df['Actual_Thickness'].value_counts().to_dict())
-        c3.write("**Periods Count:**")
-        c3.write(df['Time_Group'].value_counts().to_dict())
-        
-        st.write("### Raw Data Preview (After Processing)")
-        preview_cols = ['烤三生產日期', 'Time_Group', 'Actual_Thickness', '熱軋材質', 'Total_Qty'] + base_grades + [f for f in mech_features if f in df.columns]
-        exist_preview = [c for c in preview_cols if c in df.columns]
-        st.dataframe(df[exist_preview].head(50), use_container_width=True)
-
-    # --- SIDEBAR FILTERS ---
+    # --- SIDEBAR UI ---
     st.sidebar.header("🔎 Dashboard Filters")
     all_periods = sorted(df['Time_Group'].unique())
     ui_selection = st.sidebar.multiselect("📅 Select Period(s):", options=["All"] + all_periods, default=["All"])
@@ -139,11 +120,11 @@ if uploaded_file is not None:
         selected_periods = all_periods
     else:
         selected_periods = ui_selection
-        df = df[df['Time_Group'].isin(selected_periods)]
+        
+    df = df[df['Time_Group'].isin(selected_periods)]
+    thickness_list = sorted(df['Actual_Thickness'].dropna().unique())
 
-    thickness_list = sorted(df['Actual_Thickness'].dropna().unique()) if 'Actual_Thickness' in df.columns else []
-
-    # --- GLOBAL X-AXIS BOUNDS ---
+    # --- GLOBAL BOUNDS ---
     global_x_bounds = {}
     for feat in mech_features:
         if feat in df.columns:
@@ -167,292 +148,153 @@ if uploaded_file is not None:
                     fmin, fmax = global_x_bounds.get(feat, (0, 100))
                     cnts, _ = np.histogram(vd[feat], bins=np.linspace(fmin, fmax, 16), weights=vd['T_Count'])
                     max_y = max(max_y, cnts.max())
-        return max_y * 1.35 if max_y > 0 else 50 
-
-    overall_export_data = [] 
-    all_export_data = []
+        return max_y * 1.35 if max_y > 0 else 50
 
     # --- TAB 1: YIELD SUMMARY ---
     with tab1:
         st.header("1. Quality Yield Summary")
-        group_cols = ['Time_Group', 'Actual_Thickness', '熱軋材質']
-        existing_group_cols = [c for c in group_cols if c in df.columns]
-        
-        if existing_group_cols:
-            # We NO LONGER filter out Total_Qty == 0 so that 0.5 and 0.8 always show up!
-            summary_df = df.groupby(existing_group_cols, dropna=False)[base_grades].sum().reset_index()
-            summary_df['Total_Qty'] = summary_df[base_grades].sum(axis=1)
-            
+        group_cols = ['Time_Group', 'Actual_Thickness', 'HR_Material']
+        if set(group_cols).issubset(df.columns):
+            sum_df = df.groupby(group_cols, dropna=False)[base_grades].sum().reset_index()
+            sum_df['Total_Qty'] = sum_df[base_grades].sum(axis=1)
             for col in base_grades: 
-                summary_df[f"% {col}"] = ((summary_df[col] / summary_df['Total_Qty'].replace(0, np.nan)) * 100).fillna(0).round(1)
+                sum_df[f"% {col}"] = ((sum_df[col] / sum_df['Total_Qty'].replace(0, np.nan)) * 100).fillna(0).round(1)
             
-            display_df = summary_df.rename(columns={'Time_Group': 'Period', 'Actual_Thickness': 'Thickness', '熱軋材質': 'HR Material'})
-            
-            b_cols = ['Period', 'Thickness', 'HR Material', 'Total_Qty']
-            p_cols = [f"% {c}" for c in base_grades]
-            
-            for c in base_grades + ['Total_Qty']:
-                if c in display_df.columns: display_df[c] = display_df[c].astype(int)
-            
-            display_df = display_df[b_cols + base_grades + p_cols]
-            if 'Period' in display_df.columns: display_df = display_df.sort_values(by=['Period', 'Thickness'])
-            
+            sum_df.rename(columns={'Time_Group': 'Period', 'Actual_Thickness': 'Thickness'}, inplace=True)
             for period in selected_periods:
-                period_data = display_df[display_df['Period'] == period]
-                if not period_data.empty:
+                p_data = sum_df[sum_df['Period'] == period]
+                if not p_data.empty:
                     st.markdown(f"### 📅 Period: **{period}**")
-                    st.dataframe(period_data.drop(columns=['Period'], errors='ignore'), use_container_width=True, hide_index=True)
+                    st.dataframe(p_data.drop(columns=['Period']), use_container_width=True, hide_index=True)
             
-            st.markdown("---")
-            towrite_summary = io.BytesIO()
-            display_df.to_excel(towrite_summary, index=False, engine='openpyxl')
-            towrite_summary.seek(0)
-            st.download_button("📥 Download Pivot Summary (Excel)", data=towrite_summary, file_name="Quality_Yield_Summary.xlsx")
+            towrite = io.BytesIO()
+            sum_df.to_excel(towrite, index=False, engine='openpyxl')
+            towrite.seek(0)
+            st.download_button("📥 Download Summary (Excel)", data=towrite, file_name="Yield_Summary.xlsx")
 
-    # --- STATS & PLOT FUNCTIONS ---
-    def calculate_stats(v_arr, w_arr, k_factor):
-        m_std = np.average(v_arr, weights=w_arr)
-        s_std = np.sqrt(np.average((v_arr - m_std)**2, weights=w_arr))
+    # --- TAB 2 & 3 FUNCTIONS ---
+    def calc_stats(v_arr, w_arr, k_f):
+        m_s = np.average(v_arr, weights=w_arr)
+        s_s = np.sqrt(np.average((v_arr - m_s)**2, weights=w_arr))
         try:
-            expanded_v = np.repeat(v_arr, w_arr.astype(int))
-            q1, q3 = np.percentile(expanded_v, 25), np.percentile(expanded_v, 75)
+            exp_v = np.repeat(v_arr, w_arr.astype(int))
+            q1, q3 = np.percentile(exp_v, 25), np.percentile(exp_v, 75)
             iqr = q3 - q1
-            lower_iqr, upper_iqr = q1 - k_factor * iqr, q3 + k_factor * iqr
-            mask = (v_arr >= lower_iqr) & (v_arr <= upper_iqr)
+            mask = (v_arr >= q1 - k_f * iqr) & (v_arr <= q3 + k_f * iqr)
             vf, wf = v_arr[mask], w_arr[mask]
             if len(vf) > 0 and sum(wf) > 0:
-                m_iqr = np.average(vf, weights=wf)
-                s_iqr = np.sqrt(np.average((vf - m_iqr)**2, weights=wf))
-            else: m_iqr, s_iqr = m_std, s_std
-        except: m_iqr, s_iqr = m_std, s_std
-        return (m_std, s_std), (m_iqr, s_iqr)
+                m_i = np.average(vf, weights=wf)
+                s_i = np.sqrt(np.average((vf - m_i)**2, weights=wf))
+            else: m_i, s_i = m_s, s_s
+        except: m_i, s_i = m_s, s_s
+        return (m_s, s_s), (m_i, s_i)
 
-    def plot_qc_dist(ax, data, feat, title, custom_y_limit, is_right=False):
-        k_b = 15
-        color_map = {'A-B+': '#2ca02c', 'A-B': '#1f77b4', 'A-B-': '#ff7f0e', 'B+': '#9467bd', 'B': '#d62728'}
-        mean_inf = []
-        ax.grid(axis='y', linestyle=':', alpha=0.6, zorder=0)
+    def plot_dist(ax, data, feat, title, y_lim):
+        c_map = {'A-B+': '#2ca02c', 'A-B': '#1f77b4', 'A-B-': '#ff7f0e', 'B+': '#9467bd', 'B': '#d62728'}
         f_min, f_max = global_x_bounds.get(feat, (0, 100))
-        bins_arr = np.linspace(f_min, f_max, k_b + 1)
-        vals_list, wgts_list, colors_list = [], [], []
+        bins = np.linspace(f_min, f_max, 16)
+        v_list, w_list, c_list = [], [], []
         
-        for col_n in base_grades:
-            if col_n in data.columns and feat in data.columns:
-                temp_d = data[[feat, col_n]].dropna()
-                temp_d = temp_d[temp_d[col_n] > 0]
-                if not temp_d.empty:
-                    vals, wgts = temp_d[feat].values, temp_d[col_n].values
-                    color = color_map.get(col_n, '#7f7f7f')
-                    vals_list.append(vals); wgts_list.append(wgts); colors_list.append(color)
-                    m = np.average(vals, weights=wgts)
-                    s = np.sqrt(np.average((vals - m)**2, weights=wgts))
-                    ax.axvline(m, color=color, ls='--', lw=1.5, zorder=3)
-                    mean_inf.append({'val': m, 'color': color})
-                    if len(vals) > 2 and s > 0:
-                        x_r = np.linspace(f_min, f_max, 100)
-                        ax.plot(x_r, stats.norm.pdf(x_r, m, s) * wgts.sum() * ((f_max - f_min) / k_b), color=color, lw=2, zorder=4)
+        for c_n in base_grades:
+            if c_n in data.columns and feat in data.columns:
+                td = data[[feat, c_n]].dropna()
+                td = td[td[c_n] > 0]
+                if not td.empty:
+                    v, w = td[feat].values, td[c_n].values
+                    v_list.append(v); w_list.append(w); c_list.append(c_map.get(c_n, '#7f7f7f'))
+                    m = np.average(v, weights=w)
+                    ax.axvline(m, color=c_map.get(c_n, '#7f'), ls='--', lw=1.5)
+        
+        if v_list:
+            ax.hist(v_list, bins=bins, weights=w_list, color=c_list, stacked=True, edgecolor='white', alpha=0.8)
+        ax.set_xlim(f_min, f_max); ax.set_ylim(0, y_lim)
+        ax.set_title(title, fontsize=10, fontweight='bold')
 
-        if vals_list:
-            ax.hist(vals_list, bins=bins_arr, weights=wgts_list, color=colors_list, stacked=True, edgecolor='white', alpha=0.8, zorder=2)
-        ax.set_xlim(f_min, f_max)
-        ax.set_ylim(0, custom_y_limit)
-        if mean_inf:
-            mean_inf.sort(key=lambda x: x['val'])
-            levels = [0.90, 0.82, 0.74, 0.66, 0.58]
-            for i, info in enumerate(mean_inf):
-                y_pos = custom_y_limit * levels[i % len(levels)]
-                ax.text(info['val'], y_pos, f"{int(round(info['val']))}", color=info['color'], fontsize=9, fontweight='bold', ha='center', va='center', zorder=5, bbox=dict(facecolor='white', alpha=0.9, edgecolor=info['color'], boxstyle='round,pad=0.3'))
-        ax.set_title(title, fontsize=11, fontweight='bold', pad=10)
-        ax.set_ylabel("Count", fontsize=10)
-        if is_right:
-            legend_elements = [Patch(facecolor=color_map[k], edgecolor='white', label=k, alpha=0.5) for k in color_map]
-            ax.legend(handles=legend_elements, title="Grade", title_fontsize='9', fontsize='8', bbox_to_anchor=(1.02, 1), loc='upper left')
-
-    # --- TAB 3 SETTINGS ---
     with tab3:
         st.markdown("##### ⚙️ Production Configuration")
         c1, c2, c3, c4 = st.columns(4)
-        sigma_release = c1.number_input("Release Range (Sigma)", min_value=1.0, max_value=6.0, value=2.0, step=0.1)
-        sigma_mill = c2.number_input("Mill Range (Sigma)", min_value=0.5, max_value=4.0, value=1.0, step=0.1)
-        iqr_k = c3.number_input("IQR Filter Factor (k)", min_value=1.0, max_value=4.0, value=1.5, step=0.1)
-        chart_method = c4.radio("I-MR Chart Limits Based On:", ["Standard Method", "IQR Filtered Method"])
+        sig_rel = c1.number_input("Release Range (Sigma)", value=2.0, step=0.1)
+        sig_mill = c2.number_input("Mill Range (Sigma)", value=1.0, step=0.1)
+        iqr_k = c3.number_input("IQR Filter (k)", value=1.5, step=0.1)
+        chart_m = c4.radio("I-MR Limits Based On:", ["Standard Method", "IQR Filtered Method"])
 
-    spec_limits = {"YS": (405, 500), "TS": (415, 550), "EL": (25, None), "YPE": (4, None)}
-    good_cols = ['A-B+', 'A-B']
+    specs = {"YS": (405, 500), "TS": (415, 550), "EL": (25, None), "YPE": (4, None)}
+    g_cols = ['A-B+', 'A-B']
 
-    # --- ITERATE THROUGH PERIODS ---
     for period in selected_periods:
         df_p = df[df['Time_Group'] == period]
         if df_p.empty: continue
-        safe_p = "".join([c if c.isalnum() else "_" for c in period])
 
         with tab2:
-            st.markdown(f"## 📅 Time Period: **{period}**")
-            st.subheader(f"🌐 Overall Factory Distribution ({period})")
-            ov_y = get_shared_y(df_p, ['YS', 'TS', 'EL', 'YPE'])
+            st.markdown(f"## 📅 Period: **{period}**")
+            ov_y = get_shared_y(df_p, mech_features)
             cols = st.columns(2)
-            for i, f in enumerate(['YS', 'TS', 'EL', 'YPE']):
-                if f in df.columns:
-                    with cols[i%2]:
-                        fig, ax = plt.subplots(figsize=(10, 5))
-                        plot_qc_dist(ax, df_p, f, f"{f} (Overall - {period})", ov_y, is_right=(i%2!=0))
-                        st.pyplot(fig)
-                        fig.savefig(f"overall_{f}_{safe_p}.png", bbox_inches='tight')
-                        plt.close(fig)
+            for i, f in enumerate([x for x in ['YS', 'TS', 'EL', 'YPE'] if x in df.columns]):
+                with cols[i%2]:
+                    fig, ax = plt.subplots(figsize=(8, 4))
+                    plot_dist(ax, df_p, f, f"{f} (Overall)", ov_y)
+                    st.pyplot(fig); plt.close(fig)
             
-            st.subheader(f"🔍 Distribution by Thickness ({period})")
             for thick in thickness_list:
-                df_thick = df_p[df_p['Actual_Thickness'] == thick]
-                if df_thick.empty: continue
+                df_t = df_p[df_p['Actual_Thickness'] == thick]
+                if df_t.empty: continue
                 st.markdown(f"**📏 Thickness: {thick}**")
-                local_y = get_shared_y(df_thick, ['YS', 'TS', 'EL', 'YPE']) 
-                cols_dist = st.columns(2)
-                for i, f in enumerate(['YS', 'TS', 'EL', 'YPE']):
-                    if f in df.columns:
-                        with cols_dist[i%2]:
-                            fig, ax = plt.subplots(figsize=(10, 5))
-                            plot_qc_dist(ax, df_thick, f, f"{f} (Thick: {thick})", local_y, is_right=(i%2!=0))
-                            st.pyplot(fig)
-                            fig.savefig(f"dist_{f}_{thick}_{safe_p}.png", bbox_inches='tight')
-                            plt.close(fig)
+                l_y = get_shared_y(df_t, mech_features)
+                t_cols = st.columns(2)
+                for i, f in enumerate([x for x in ['YS', 'TS', 'EL', 'YPE'] if x in df.columns]):
+                    with t_cols[i%2]:
+                        fig, ax = plt.subplots(figsize=(8, 4))
+                        plot_dist(ax, df_t, f, f"{f} (Thick: {thick})", l_y)
+                        st.pyplot(fig); plt.close(fig)
             st.markdown("---")
 
         with tab3:
-            st.markdown(f"## 📅 Time Period: **{period}**")
-            st.subheader(f"🌐 Overall Factory Goals ({period})")
-            
-            period_overall_data = []
-            total_n_overall = df_p[base_grades].sum().sum()
-            seg_dist_overall = "N/A" if total_n_overall == 0 else ", ".join([f"{k}:{int(round(df_p[k].sum()/total_n_overall*100))}%" for k in base_grades])
-
-            for f in mech_features:
-                if f in df.columns:
-                    df_ov = df_p[[f] + good_cols].dropna(subset=[f]).copy()
-                    if not df_ov.empty:
-                        df_ov['Good_Qty'] = df_ov[good_cols].sum(axis=1)
-                        df_ov = df_ov[df_ov['Good_Qty'] > 0]
-                        
-                    spec_str_ov = f"{int(spec_limits[f][0])}-{int(spec_limits[f][1])}" if f in spec_limits and spec_limits[f][1] else (f">={int(spec_limits[f][0])}" if f in spec_limits and spec_limits[f][0] else "N/A")
-
-                    if not df_ov.empty:
-                        v, w = df_ov[f].values, df_ov['Good_Qty'].values
-                        (m_s, s_s), (m_i, s_i) = calculate_stats(v, w, iqr_k)
-                        for m_name, m_val, s_val in [("Standard", m_s, s_s), (f"IQR (k={iqr_k})", m_i, s_i)]:
-                            is_std = (m_name == "Standard")
-                            row = {
-                                "Period": period,
-                                "Feature": f if is_std else "", 
-                                "Method": m_name,
-                                "Limit": spec_str_ov if is_std else "", 
-                                "Segment Dist": seg_dist_overall if is_std else "",
-                                "TARGET GOAL": int(round(m_val)), "TOLERANCE": int(round(s_val)),
-                                f"MILL {sigma_mill}σ": f"{max(0, int(round(m_val - sigma_mill*s_val)))}-{int(round(m_val + sigma_mill*s_val))}",
-                                f"RELEASE {sigma_release}σ": f"{max(0, int(round(m_val - sigma_release*s_val)))}-{int(round(m_val + sigma_release*s_val))}"
-                            }
-                            period_overall_data.append(row)
-                            
-                            exp_ov_row = row.copy()
-                            exp_ov_row['Feature'] = f; exp_ov_row['Limit'] = spec_str_ov; exp_ov_row['Segment Dist'] = seg_dist_overall
-                            overall_export_data.append(exp_ov_row)
-
-            display_period_df = pd.DataFrame(period_overall_data).drop(columns=['Period'], errors='ignore')
-            st.dataframe(display_period_df, use_container_width=True, hide_index=True)
-
-            st.subheader(f"🔍 Local Control Limits & I-MR ({period})")
+            st.markdown(f"## 📅 Period: **{period}**")
             for thick in thickness_list:
                 df_t = df_p[df_p['Actual_Thickness'] == thick]
                 if df_t.empty: continue
                 
                 st.markdown(f"**📏 Thickness: {thick}**")
-                period_thick_data = []
-                plot_data_dict = {}
+                p_data, p_dict = [], {}
                 
                 for f in mech_features:
                     if f in df.columns:
-                        temp_calc = df_t[[f] + good_cols].dropna(subset=[f]).copy()
-                        if not temp_calc.empty:
-                            temp_calc['Good_Qty'] = temp_calc[good_cols].sum(axis=1)
-                            temp_calc = temp_calc[temp_calc['Good_Qty'] > 0]
-                            
-                        spec_str = f"{int(spec_limits[f][0])}-{int(spec_limits[f][1])}" if f in spec_limits and spec_limits[f][1] else (f">={int(spec_limits[f][0])}" if f in spec_limits and spec_limits[f][0] else "N/A")
-
-                        if not temp_calc.empty:
-                            v, w = temp_calc[f].values, temp_calc['Good_Qty'].values
-                            (m_s, s_s), (m_i, s_i) = calculate_stats(v, w, iqr_k)
-                            plot_data_dict[f] = {'values': v, 'mean_std': m_s, 'std_std': s_s, 'mean_iqr': m_i, 'std_iqr': s_i}
-                            
-                            total_n = df_t[base_grades].sum().sum()
-                            seg_dist = "N/A" if total_n == 0 else ", ".join([f"{k}:{int(round(df_t[k].sum()/total_n*100))}%" for k in base_grades])
-                            
-                            for m_name, m_val, s_val in [("Standard", m_s, s_s), (f"IQR (k={iqr_k})", m_i, s_i)]:
-                                is_std = (m_name == "Standard")
-                                row = {
-                                    "Period": period, "Thickness": thick,
-                                    "Feature": f if is_std else "", "Method": m_name,
-                                    "Limit": spec_str if is_std else "", "Segment Dist": seg_dist if is_std else "",
-                                    "TARGET GOAL": int(round(m_val)), "TOLERANCE": int(round(s_val)),
-                                    f"MILL {sigma_mill}σ": f"{max(0, int(round(m_val - sigma_mill*s_val)))}-{int(round(m_val + sigma_mill*s_val))}",
-                                    f"RELEASE {sigma_release}σ": f"{max(0, int(round(m_val - sigma_release*s_val)))}-{int(round(m_val + sigma_release*s_val))}"
-                                }
-                                period_thick_data.append(row)
-                                
-                                exp_row = row.copy()
-                                exp_row['Feature'] = f; exp_row['Limit'] = spec_str; exp_row['Segment Dist'] = seg_dist
-                                all_export_data.append(exp_row)
-
-                display_thick_df = pd.DataFrame(period_thick_data).drop(columns=['Period', 'Thickness'], errors='ignore')
-                st.dataframe(display_thick_df, use_container_width=True, hide_index=True)
+                        tc = df_t[[f] + g_cols].dropna()
+                        if not tc.empty:
+                            tc['G_Qty'] = tc[g_cols].sum(axis=1)
+                            tc = tc[tc['G_Qty'] > 0]
+                        if not tc.empty:
+                            v, w = tc[f].values, tc['G_Qty'].values
+                            (ms, ss), (mi, si) = calc_stats(v, w, iqr_k)
+                            p_dict[f] = {'v': v, 'm': ms if chart_m == "Standard Method" else mi, 's': ss if chart_m == "Standard Method" else si}
+                            for m_n, m_v, s_v in [("Standard", ms, ss), (f"IQR (k={iqr_k})", mi, si)]:
+                                p_data.append({
+                                    "Feature": f if m_n == "Standard" else "", "Method": m_n,
+                                    "TARGET": int(round(m_v)), "TOLERANCE": int(round(s_v)),
+                                    f"MILL {sig_mill}σ": f"{max(0, int(round(m_v - sig_mill*s_v)))}-{int(round(m_v + sig_mill*s_v))}",
+                                    f"RELEASE {sig_rel}σ": f"{max(0, int(round(m_v - sig_rel*s_v)))}-{int(round(m_v + sig_rel*s_v))}"
+                                })
                 
-                # --- I-MR CHARTS ---
-                cols_imr = st.columns(2)
-                top4 = [f_name for f_name in ['YS', 'TS', 'EL', 'YPE'] if f_name in plot_data_dict]
-                for idx, f in enumerate(top4):
-                    with cols_imr[idx % 2]:
-                        d = plot_data_dict[f]
-                        v = d['values']
-                        mv, sv = (d['mean_std'], d['std_std']) if chart_method == "Standard Method" else (d['mean_iqr'], d['std_iqr'])
+                if p_data: st.dataframe(pd.DataFrame(p_data), use_container_width=True, hide_index=True)
+                
+                # I-MR Plots
+                imr_c = st.columns(2)
+                for idx, f in enumerate([x for x in ['YS', 'TS', 'EL', 'YPE'] if x in p_dict]):
+                    with imr_c[idx%2]:
+                        d = p_dict[f]
+                        if len(d['v']) > 1:
+                            fig, (a1, a2) = plt.subplots(2, 1, figsize=(8, 6), gridspec_kw={'height_ratios': [2, 1]})
+                            ucl, lcl = d['m'] + sig_rel*d['s'], max(0, d['m'] - sig_rel*d['s'])
+                            a1.plot(d['v'], marker='o', color='#1f77b4', lw=1)
+                            a1.axhline(d['m'], color='green', ls='--'); a1.axhline(ucl, color='red', ls=':'); a1.axhline(lcl, color='red', ls=':')
+                            a1.set_title(f"I-Chart: {f}", fontsize=10)
                             
-                        if len(v) > 1:
-                            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 7), gridspec_kw={'height_ratios': [2, 1]})
-                            ucl, lcl = mv + sigma_release*sv, max(0, mv - sigma_release*sv)
-                            
-                            ax1.plot(v, marker='o', color='#1f77b4', ms=4, lw=1, zorder=1)
-                            outs = np.where((v > ucl) | (v < lcl))[0]
-                            if len(outs) > 0:
-                                ax1.scatter(outs, v[outs], color='red', s=60, zorder=2, label=f'Out of Control ({sigma_release}σ)')
-                                ax1.legend(loc='upper left', fontsize=8)
-                            
-                            ax1.axhline(mv, color='green', ls='--', lw=1.5)
-                            ax1.axhline(ucl, color='red', ls='--', lw=1.2)
-                            ax1.axhline(lcl, color='red', ls='--', lw=1.2)
-                            
-                            v_max, v_min = np.max(v), np.min(v)
-                            ax1.axhline(v_max, color='gray', ls=':', lw=1, alpha=0.7)
-                            ax1.axhline(v_min, color='gray', ls=':', lw=1, alpha=0.7)
-                            trans1 = ax1.get_yaxis_transform()
-                            ax1.text(1.02, mv, f"Mean: {mv:.1f}", color='green', transform=trans1, va='center', fontweight='bold')
-                            ax1.text(1.02, ucl, f"UCL: {ucl:.1f}", color='red', transform=trans1, va='center', fontweight='bold')
-                            ax1.text(1.02, lcl, f"LCL: {lcl:.1f}", color='red', transform=trans1, va='center', fontweight='bold')
-                            ax1.set_title(f"I-Chart: {f} ({chart_method})", fontsize=11, fontweight='bold')
-                            
-                            mr = np.abs(np.diff(v))
-                            mrm = np.mean(mr)
-                            mru = 3.267 * mrm
-                            
-                            ax2.plot(mr, marker='o', color='orange', ms=4, lw=1, zorder=1)
-                            mr_outs = np.where(mr > mru)[0]
-                            if len(mr_outs) > 0: ax2.scatter(mr_outs, mr[mr_outs], color='red', s=60, zorder=2)
-                            ax2.axhline(mrm, color='green', ls='--', lw=1.5)
-                            ax2.axhline(mru, color='red', ls='--', lw=1.2)
-                            trans2 = ax2.get_yaxis_transform()
-                            ax2.text(1.02, mrm, f"Mean: {mrm:.1f}", color='green', transform=trans2, va='center', fontweight='bold')
-                            ax2.text(1.02, mru, f"UCL: {mru:.1f}", color='red', transform=trans2, va='center', fontweight='bold')
-                            ax2.set_title("Moving Range", fontsize=10)
-                            
-                            fig.tight_layout(); fig.subplots_adjust(right=0.85)
-                            st.pyplot(fig)
-                            fig.savefig(f"imr_{f}_{thick}_{safe_p}.png", bbox_inches='tight')
-                            plt.close(fig)
+                            mr = np.abs(np.diff(d['v']))
+                            mrm, mru = np.mean(mr), 3.267 * np.mean(mr)
+                            a2.plot(mr, marker='o', color='orange', lw=1)
+                            a2.axhline(mrm, color='green', ls='--'); a2.axhline(mru, color='red', ls=':')
+                            a2.set_title("Moving Range", fontsize=9)
+                            fig.tight_layout(); st.pyplot(fig); plt.close(fig)
             st.markdown("---")
 
     # --- EXPORT SECTION ---
