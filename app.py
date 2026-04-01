@@ -96,31 +96,34 @@ if uploaded_file is not None:
     df_filtered = df[df['Time_Group'].isin(selected_periods)]
     thickness_list = sorted(df['Actual_Thickness'].dropna().unique())
 
-    # --- TAB 1: YIELD SUMMARY & PERIOD COMPARISON ---
+    # --- TAB 1: YIELD SUMMARY ---
     with tab1:
-        st.header("1. Quality Yield Summary & Period Comparison")
-        st.info("High-level overview of production yield and defect rates across different time periods.")
+        st.header("1. Quality Yield Summary & Worst Offenders")
+        st.info("Overview of production yield. Sorted to show the highest risk specifications first.")
 
-        # --- EXECUTIVE SUMMARY: SO SÁNH TỔNG QUAN GIỮA CÁC GIAI ĐOẠN ---
-        st.subheader("📊 Executive Summary: Performance by Period")
+        # --- EXECUTIVE SUMMARY: CHI TIẾT THỜI GIAN + ĐỘ DÀY + VẬT LIỆU ---
+        st.subheader("📊 Executive Summary: Top Defect Contributors")
         
-        # Gom nhóm theo Time_Group để tính tổng
-        period_summary = df_filtered.groupby('Time_Group')[['Total_Qty', 'Good_Qty', 'Bad_Qty']].sum().reset_index()
+        # Gom nhóm theo cả Thời gian, Độ dày và Vật liệu
+        period_summary = df_filtered.groupby(['Time_Group', 'Actual_Thickness', 'HR_Material'])[['Total_Qty', 'Good_Qty', 'Bad_Qty']].sum().reset_index()
         
-        # Tính tỷ lệ % chuẩn xác (Weighted Average)
+        # Lọc bỏ các dòng không có dữ liệu sản xuất
+        period_summary = period_summary[period_summary['Total_Qty'] > 0]
+        
+        # Tính tỷ lệ % chuẩn xác
         period_summary['Yield (%)'] = (period_summary['Good_Qty'] / period_summary['Total_Qty'] * 100).fillna(0).round(2)
         period_summary['Defect_Rate (%)'] = (period_summary['Bad_Qty'] / period_summary['Total_Qty'] * 100).fillna(0).round(2)
         
-        # Sắp xếp theo thứ tự thời gian
-        period_summary = period_summary.sort_values('Time_Group')
+        # SẮP XẾP TỶ LỆ LỖI GIẢM DẦN (Đẩy lỗi nặng nhất lên đầu bảng)
+        period_summary = period_summary.sort_values(by=['Defect_Rate (%)', 'Bad_Qty'], ascending=[False, False])
 
         if not period_summary.empty and period_summary['Bad_Qty'].sum() > 0:
-            # Tự động tìm ra giai đoạn có tỷ lệ lỗi cao nhất
-            worst_period = period_summary.loc[period_summary['Defect_Rate (%)'].idxmax()]
+            # Tự động đọc tên "Thủ phạm" số 1 để báo cáo Sếp
+            worst_row = period_summary.iloc[0]
             
-            st.error(f"⚠️ **Executive Insight:** The period **{worst_period['Time_Group']}** exhibits the highest overall defect rate at **{worst_period['Defect_Rate (%)']}%** (Total Defective Coils: {worst_period['Bad_Qty']}).")
+            st.error(f"⚠️ **Executive Insight:** The highest risk item is **{worst_row['Actual_Thickness']}mm ({worst_row['HR_Material']})** during **{worst_row['Time_Group']}**, hitting a defect rate of **{worst_row['Defect_Rate (%)']}%** ({worst_row['Bad_Qty']} defective coils).")
             
-            # Hiển thị bảng tổng kết có đổ màu (Gradient) cho cột Defect_Rate
+            # Hiển thị bảng với màu sắc Gradient nổi bật
             st.dataframe(
                 period_summary.style.background_gradient(subset=['Defect_Rate (%)'], cmap='Reds')
                                     .background_gradient(subset=['Yield (%)'], cmap='Greens')
@@ -129,13 +132,13 @@ if uploaded_file is not None:
                 hide_index=True
             )
         else:
-            st.success("✅ **Executive Insight:** Production is running smoothly with no significant defects in the selected periods.")
+            st.success("✅ **Executive Insight:** Production is running smoothly with no significant defects.")
             st.dataframe(period_summary, use_container_width=True, hide_index=True)
 
         st.markdown("---")
 
-        # --- DETAILED YIELD (BẢNG CHI TIẾT NHƯ CŨ) ---
-        st.subheader("📑 Detailed Yield by Specification")
+        # --- DETAILED YIELD BY PERIOD ---
+        st.subheader("📑 Detailed Yield by Period")
         sum_df = df_filtered.groupby(['Time_Group', 'Actual_Thickness', 'HR_Material'], dropna=False)[base_grades].sum().reset_index()
         sum_df['Total_Qty'] = sum_df[base_grades].sum(axis=1)
         
@@ -150,7 +153,7 @@ if uploaded_file is not None:
                 st.markdown(f"#### 📅 Period: **{period}**")
                 st.dataframe(p_data.drop(columns=['Period']), use_container_width=True, hide_index=True)
 
-        # --- NÚT XUẤT EXCEL ---
+        # --- XUẤT EXCEL ---
         st.markdown("---")
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -158,9 +161,10 @@ if uploaded_file is not None:
             period_summary.to_excel(writer, index=False, sheet_name='Executive_Summary')
         
         st.download_button(
-            label="📥 Download Full Yield Report (Excel)", 
-            data=output.getvalue(), 
-            file_name="Quality_Yield_Report.xlsx"
+            label="📥 Download Yield Summary (Excel)",
+            data=output.getvalue(),
+            file_name="Yield_Summary.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
     # --- TAB 2: DISTRIBUTION ---
     global_x_bounds = {}
