@@ -23,20 +23,22 @@ if uploaded_file is not None:
     df.columns = df.columns.str.strip() 
 
     # --- DYNAMICALLY LOCATE AND RENAME THICKNESS COLUMN ---
-    target_thickness_col = None
-    for i, col in enumerate(df.columns):
-        base_col = col.split('.')[0] if '.' in col else col
-        if base_col == '厚度':
-            if i + 1 < len(df.columns):
-                next_col = df.columns[i+1].split('.')[0] if '.' in df.columns[i+1] else df.columns[i+1]
-                if next_col == '型式':
-                    target_thickness_col = col
-                    break
-    
-    if target_thickness_col:
-        df.rename(columns={target_thickness_col: 'Thickness'}, inplace=True)
-    elif '厚度' in df.columns:
-        df.rename(columns={'厚度': 'Thickness'}, inplace=True)
+    # Handle both cases: User might have named it 'Thickness' or '厚度'
+    if 'Thickness' not in df.columns:
+        target_thickness_col = None
+        for i, col in enumerate(df.columns):
+            base_col = col.split('.')[0] if '.' in col else col
+            if base_col == '厚度':
+                if i + 1 < len(df.columns):
+                    next_col = df.columns[i+1].split('.')[0] if '.' in df.columns[i+1] else df.columns[i+1]
+                    if next_col == '型式':
+                        target_thickness_col = col
+                        break
+        
+        if target_thickness_col:
+            df.rename(columns={target_thickness_col: 'Thickness'}, inplace=True)
+        elif '厚度' in df.columns:
+            df.rename(columns={'厚度': 'Thickness'}, inplace=True)
 
     # --- COLUMN TRANSLATION ---
     rename_map = {
@@ -53,8 +55,12 @@ if uploaded_file is not None:
         date_str = df['烤三生產日期'].astype(str).str.replace(r'\.0$', '', regex=True)
         df['烤三生產日期'] = pd.to_datetime(date_str, format='%Y%m%d', errors='coerce').fillna(pd.to_datetime(date_str, errors='coerce'))
 
+    # --- STRICT WHITELIST FOR THICKNESS ---
     if 'Thickness' in df.columns:
         df['Thickness'] = pd.to_numeric(df['Thickness'], errors='coerce').round(3)
+        # ONLY allow these exact standard sizes. Everything else is dropped.
+        standard_thicknesses = [0.5, 0.6, 0.75, 0.8]
+        df = df[df['Thickness'].isin(standard_thicknesses)]
         
     if '熱軋材質' in df.columns:
         df['熱軋材質'] = df['熱軋材質'].astype(str).str.strip()
@@ -94,7 +100,6 @@ if uploaded_file is not None:
     # --- SIDEBAR FILTERS ---
     st.sidebar.header("🔎 Dashboard Filters")
     
-    # Custom sort to ensure "Full Year" appears logically
     all_periods = sorted(df['Time_Group'].unique())
     options_list = ["All"] + all_periods
     
