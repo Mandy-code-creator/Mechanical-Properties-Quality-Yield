@@ -385,7 +385,7 @@ if uploaded_file is not None:
                     st.pyplot(fig); plt.close(fig)
                     st.markdown("---")
     # --- TASK 4: I-MR CHART (TIMELINE STABILITY) ---
-    with tab5:
+    with tab4:
         st.header("📈 Task 4: I-MR Stability Tracking (Chronological)")
         st.info("Analysis based on production date from 2024 to 2026. Red dots = Out of Spec.")
 
@@ -468,76 +468,55 @@ if uploaded_file is not None:
     # (Giữ nguyên logic Export ban đầu của bạn...)
     st.sidebar.header("📥 Export Options")
   
-    # --- PDF EXPORT ---
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("🖨️ PDF Reports")
-    def clean(t): return str(t).replace('±', '+/-').replace('–', '-').encode('latin-1', 'ignore').decode('latin-1')
+# --- EXPORT PDF VISUAL REPORT ---
+    st.sidebar.header("📥 Export PDF Report")
+    st.sidebar.info("Navigate through the tabs to generate and update charts, then click below to compile them into a PDF.")
 
-    if st.sidebar.button("Generate PDF Report"):
-        pdf = FPDF(orientation='L')
-        if 'display_df' in locals() and not display_df.empty:
-            pdf.add_page(); pdf.set_font('Arial', 'B', 16); pdf.cell(0, 10, "1. YIELD SUMMARY", ln=True, align="C"); pdf.ln(5)
-            pdf.set_font('Arial', 'B', 8)
-            cw_tab1 = [25, 15, 25, 15] + [12]*len(base_grades) + [12]*len(p_cols)
-            for i, col in enumerate(display_df.columns): pdf.cell(cw_tab1[i] if i < len(cw_tab1) else 20, 8, clean(col), border=1, align='C')
-            pdf.ln(); pdf.set_font('Arial', '', 8)
-            for _, r in display_df.head(25).iterrows(): 
-                for i, v in enumerate(r): pdf.cell(cw_tab1[i] if i < len(cw_tab1) else 20, 8, clean(v), border=1, align='C')
-                pdf.ln()
-
-        heads = ["Feature", "Method", "Limit", "Segment Dist", "TARGET", "TOL", f"MILL {sigma_mill}σ", f"RELEASE {sigma_release}σ"]
-        c_w3 = [16, 22, 24, 60, 15, 12, 28, 30] 
-
-        for period in selected_periods:
-            safe_p = "".join([c if c.isalnum() else "_" for c in period])
-            pdf.add_page(); pdf.set_font('Arial', 'B', 16); pdf.cell(0, 10, f"--- PERIOD: {period} ---", ln=True, align="C"); pdf.ln(5)
+    if st.sidebar.button("🖨️ Generate PDF containing Charts"):
+        pdf = FPDF(orientation='L', unit='mm', format='A4') # Khổ giấy A4 nằm ngang
+        pdf.set_auto_page_break(auto=True, margin=15)
+        
+        # --- PAGE 1: HEATMAP ---
+        if os.path.exists("export_heatmap.png"):
+            pdf.add_page()
+            pdf.set_font('Arial', 'B', 16)
+            pdf.cell(0, 10, "1. DEFECT HOTSPOT DIAGNOSTIC MAP", ln=True, align='C')
+            pdf.image("export_heatmap.png", x=15, y=25, w=260) # Chèn hình Heatmap
             
-            pdf.set_font('Arial', 'B', 12); pdf.cell(0, 10, "Overall Distribution", ln=True); ys = pdf.get_y()
-            for idx, f in enumerate(['YS', 'TS', 'EL', 'YPE']):
-                path = f"overall_{f}_{safe_p}.png"
-                if os.path.exists(path): pdf.image(path, x=(10 if idx%2==0 else 150), y=(ys if idx<2 else ys+75), w=135)
+        # --- PAGE 2: PARETO ---
+        if os.path.exists("export_pareto.png"):
+            pdf.add_page()
+            pdf.set_font('Arial', 'B', 16)
+            pdf.cell(0, 10, "2. PARETO ANALYSIS (MAIN DEFECTS)", ln=True, align='C')
+            pdf.image("export_pareto.png", x=30, y=25, w=220) # Chèn hình Pareto
             
-            pdf.add_page(); pdf.set_font('Arial', 'B', 12); pdf.cell(0, 10, "Overall Goals", ln=True)
-            pdf.set_font('Arial', 'B', 8)
-            for i, h in enumerate(heads): pdf.cell(c_w3[i], 7, clean(h), border=1, align='C')
-            pdf.ln(); pdf.set_font('Arial', '', 7)
-            
-            last_feat = ""
-            for row in [r for r in overall_export_data if r['Period'] == period]:
-                is_first = (row["Feature"] != last_feat)
-                if is_first: last_feat = row["Feature"]
-                v_list = [row["Feature"] if is_first else "", row["Method"], row["Limit"], row["Segment Dist"] if is_first else "", str(row["TARGET GOAL"]), str(row["TOLERANCE"]), row[f"MILL {sigma_mill}σ"], row[f"RELEASE {sigma_release}σ"]]
-                for i, v in enumerate(v_list): pdf.cell(c_w3[i], 7, clean(v), border=1, align='C')
-                pdf.ln()
-
-            for thick in thickness_list:
-                period_thick_data = [r for r in all_export_data if r['Period'] == period and r['Thickness'] == thick]
-                if not period_thick_data: continue
+        # --- PAGE 3+: I-MR CHARTS ---
+        pdf.add_page()
+        pdf.set_font('Arial', 'B', 16)
+        pdf.cell(0, 10, "3. I-MR PROCESS STABILITY TRACKING", ln=True, align='C')
+        
+        y_pos = 25
+        chart_count = 0
+        for feat in ['YS', 'TS', 'EL', 'YPE']:
+            img_path = f"export_imr_{feat}.png"
+            if os.path.exists(img_path):
+                if chart_count == 2: # Nếu đã dán 2 hình thì qua trang mới
+                    pdf.add_page()
+                    y_pos = 20
+                    chart_count = 0
+                pdf.image(img_path, x=20, y=y_pos, w=250) # Chèn hình I-MR
+                y_pos += 90 # Đẩy tọa độ Y xuống cho hình tiếp theo
+                chart_count += 1
                 
-                pdf.add_page(); pdf.set_font('Arial', 'B', 12); pdf.cell(0, 10, f"Distribution - Thick: {thick}", ln=True); ys = pdf.get_y()
-                for idx, f in enumerate(['YS', 'TS', 'EL', 'YPE']):
-                    path = f"dist_{f}_{thick}_{safe_p}.png"
-                    if os.path.exists(path): pdf.image(path, x=(10 if idx%2==0 else 150), y=(ys if idx<2 else ys+75), w=135)
-                
-                pdf.add_page(); pdf.set_font('Arial', 'B', 12); pdf.cell(0, 10, f"Control Limits - Thick: {thick}", ln=True)
-                pdf.set_font('Arial', 'B', 8)
-                for i, h in enumerate(heads): pdf.cell(c_w3[i], 7, clean(h), border=1, align='C')
-                pdf.ln(); pdf.set_font('Arial', '', 7)
-                
-                last_feat_t = ""
-                for row in period_thick_data:
-                    is_first = (row["Feature"] != last_feat_t)
-                    if is_first: last_feat_t = row["Feature"]
-                    v_list = [row["Feature"] if is_first else "", row["Method"], row["Limit"] if is_first else "", row["Segment Dist"] if is_first else "", str(row["TARGET GOAL"]), str(row["TOLERANCE"]), row[f"MILL {sigma_mill}σ"], row[f"RELEASE {sigma_release}σ"]]
-                    for i, v in enumerate(v_list): pdf.cell(c_w3[i], 7, clean(v), border=1, align='C')
-                    pdf.ln()
-                
-                pdf.add_page(); pdf.set_font('Arial', 'B', 12); pdf.cell(0, 10, f"I-MR Charts - Thick: {thick}", ln=True)
-                y_imr = pdf.get_y() + 2 
-                for idx, f in enumerate(['YS', 'TS', 'EL', 'YPE']):
-                    path = f"imr_{f}_{thick}_{safe_p}.png"
-                    if os.path.exists(path): pdf.image(path, x=(10 if idx%2==0 else 150), y=(y_imr if idx<2 else y_imr+90), w=130)
-
-        pdf.output("QC_Report.pdf")
-        with open("QC_Report.pdf", "rb") as f:
-            st.sidebar.download_button("📥 Download PDF", f.read(), "QC_Report.pdf", "application/pdf")
+        # Xuất file PDF
+        pdf.output("Quality_Visual_Report.pdf")
+        
+        # Hiển thị nút tải về
+        with open("Quality_Visual_Report.pdf", "rb") as f:
+            st.sidebar.download_button(
+                label="✅ Click to Download your PDF Report", 
+                data=f.read(), 
+                file_name="Quality_Visual_Report.pdf", 
+                mime="application/pdf"
+            )
+        st.sidebar.success("PDF Generated Successfully!")
