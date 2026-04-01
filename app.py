@@ -198,25 +198,31 @@ if uploaded_file is not None:
         bad_g = ['A-B-', 'B+', 'B']
         
         # 3.1 HEATMAP % B (Điểm nóng chất lượng)
-        st.subheader("1. Heatmap: Tỷ lệ lỗi (%) theo Độ dày & Giai đoạn")
+        # Xác định rõ các cấp độ lỗi trong tiêu đề
+        defect_labels = ", ".join(bad_g) # Sẽ tạo ra chuỗi "A-B-, B+, B"
+        st.subheader(f"1. Heatmap: Tỷ lệ lỗi tổng hợp (%) - Các cấp độ: {defect_labels}")
+        
         # Tính % lỗi (Grade B)
         df_filtered['Bad_Qty'] = df_filtered[bad_g].sum(axis=1)
         df_filtered['Pct_B'] = (df_filtered['Bad_Qty'] / df_filtered['Total_Qty'] * 100).fillna(0)
         
-        # Tạo bảng pivot cho Heatmap
-        # Kết hợp Thickness + Material để Sếp soi kỹ hơn
+        # Tạo bảng pivot
         df_filtered['Spec_Label'] = df_filtered['Actual_Thickness'].astype(str) + " (" + df_filtered['HR_Material'] + ")"
         heat_data = df_filtered.groupby(['Spec_Label', 'Time_Group'])['Pct_B'].mean().unstack()
 
         if not heat_data.empty:
             fig, ax = plt.subplots(figsize=(12, 7))
             import seaborn as sns
+            # Vẽ Heatmap
             sns.heatmap(heat_data, annot=True, fmt=".1f", cmap="YlOrRd", linewidths=.5, ax=ax)
-            ax.set_title("BẢN ĐỒ ĐIỂM NÓNG: Ô CÀNG ĐỎ = TỶ LỆ LỖI CÀNG CAO", fontsize=12, fontweight='bold', color='red')
+            
+            # CẬP NHẬT TIÊU ĐỀ CHI TIẾT Ở ĐÂY
+            ax.set_title(f"BIỂU ĐỒ ĐIỂM NÓNG: TỶ LỆ LỖI CẤP ĐỘ ({defect_labels})\n(Ô CÀNG ĐỎ = TỶ LỆ LỖI CÀNG CAO)", 
+                         fontsize=12, fontweight='bold', color='red', pad=20)
+            
+            ax.set_ylabel("Quy cách (Độ dày & Vật liệu)")
+            ax.set_xlabel("Giai đoạn sản xuất")
             st.pyplot(fig); plt.close(fig)
-        else:
-            st.warning("Không đủ dữ liệu để lập bản đồ nhiệt.")
-
         # 3.2 PARETO CHART (Ưu tiên xử lý lỗi)
         st.subheader("2. Pareto Chart: Các loại lỗi phổ biến nhất")
         defect_sums = df_filtered[bad_g].sum().sort_values(ascending=False)
