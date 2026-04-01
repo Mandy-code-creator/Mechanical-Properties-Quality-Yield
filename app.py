@@ -1,12 +1,12 @@
 import streamlit as st
 import pandas as pd
-import matplotlib.subplots as subplots
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy.stats as stats
 import io
 from fpdf import FPDF
 import os
+import datetime
 from matplotlib.patches import Patch
 
 # --- PAGE CONFIGURATION ---
@@ -15,46 +15,71 @@ st.set_page_config(page_title="QC Yield & Control Limit Optimizer", layout="wide
 st.title("📊 Quality Yield & Control Limit Optimizer")
 st.markdown("---")
 
-# --- 1. MAIN APP EXECUTION (NO CACHE TO AVOID STALE DATA) ---
+# --- 1. MAIN APP EXECUTION ---
 uploaded_file = st.file_uploader("Upload Excel data (.xlsx)", type=["xlsx"])
 
 if uploaded_file is not None:
-    # Read raw data directly
-    df = pd.read_excel(uploaded_file)
+    # Read raw data
+    raw_df = pd.read_excel(uploaded_file)
+    df = raw_df.copy()
     df.columns = df.columns.str.strip() 
 
-    # --- 1. LOCATE CORRECT THICKNESS COLUMN ---
-    target_col = None
-    cols = list(df.columns)
-    for i, c in enumerate(cols):
-        if '厚度' in str(c) and i + 1 < len(cols) and '型式' in str(cols[i+1]):
-            target_col = c
-            break
-    
-    if target_col:
-        df.rename(columns={target_col: 'Thickness'}, inplace=True)
-    elif '厚度' in df.columns:
-        df.rename(columns={'厚度': 'Thickness'}, inplace=True)
-
-    # Filter standard thicknesses immediately
+    # --- 1. ROBUST THICKNESS COLUMN LOCATOR ---
+    thickness_col_name = None
     if 'Thickness' in df.columns:
-        df['Thickness'] = pd.to_numeric(df['Thickness'], errors='coerce').round(3)
-        df = df[df['Thickness'].isin([0.5, 0.6, 0.75, 0.8])]
+        thickness_col_name = 'Thickness'
+    else:
+        # Search for '厚度' that is exactly one column before '型式'
+        cols = list(df.columns)
+        for i, c in enumerate(cols):
+            if '厚度' in str(c) and i + 1 < len(cols) and '型式' in str(cols[i+1]):
+                thickness_col_name = c
+                break
+        # Fallback
+        if not thickness_col_name and '厚度' in df.columns:
+            thickness_col_name = '厚度'
 
-    # --- 2. VECTORIZED DATE PARSING (EXPLICIT YYYYMMDD) ---
+    if thickness_col_name:
+        df.rename(columns={thickness_col_name: 'Actual_Thickness'}, inplace=True)
+
+    # --- 2. MULTI-COLUMN MERGE FOR QUALITY GRADES (e.g. A-B+ and A-B+.1) ---
+    base_grades = ['A-B+', 'A-B', 'A-B-', 'B+', 'B']
+    for g in base_grades:
+        match_cols = [c for c in df.columns if c == g or str(c).startswith(f"{g}.")]
+        if match_cols:
+            df[g] = df[match_cols].apply(pd.to_numeric, errors='coerce').fillna(0).sum(axis=1)
+        else:
+            df[g] = 0
+
+    # --- 3. VECTORIZED DATE PARSING (EXPLICIT YYYYMMDD) ---
     if '烤三生產日期' in df.columns:
         d_str = df['烤三生產日期'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
-        d_parsed = pd.to_datetime(d_str, format='%Y%m%d', errors='coerce')
-        df['烤三生產日期'] = d_parsed.fillna(pd.to_datetime(d_str, errors='coerce'))
+        parsed_dates = pd.to_datetime(d_str, format='%Y%m%d', errors='coerce')
+        df['烤三生產日期'] = parsed_dates.fillna(pd.to_datetime(d_str, errors='coerce'))
 
-    # --- 3. MATERIAL (PREVENT PANDAS FROM DROPPING BLANK ROWS) ---
+    # --- 4. MATERIAL & MECHANICAL FEATURES ---
     if '熱軋材質' in df.columns:
-        df['熱軋材質'] = df['熱軋材質'].astype(str).str.strip()
-        df['熱軋材質'] = df['熱軋材質'].replace(['nan', ''], 'Unknown')
+        df['熱軋材質'] = df['熱軋材質'].astype(str).str.strip().replace(['nan', ''], 'Unknown')
     else:
         df['熱軋材質'] = 'Unknown'
 
-    # --- 4. CATEGORIZE PERIODS ---
+    rename_mech = {'烤漆降伏強度': 'YS', '烤漆抗拉強度': 'TS', '伸長率': 'EL'}
+    df.rename(columns=rename_mech, inplace=True)
+    mech_features = ['YS', 'TS', 'EL', 'YPE', 'HARDNESS']
+    for f in mech_features:
+        if f in df.columns:
+            df[f] = pd.to_numeric(df[f], errors='coerce')
+
+    if '年度' in df.columns:
+        df['年度'] = df['年度'].astype(str).str.replace(r'\.0$', '', regex=True)
+
+    # --- 5. STRICT WHITELIST FILTER FOR THICKNESS ---
+    if 'Actual_Thickness' in df.columns:
+        df['Actual_Thickness'] = pd.to_numeric(df['Actual_Thickness'], errors='coerce').round(3)
+        # Keep only these strictly
+        df = df[df['Actual_Thickness'].isin([0.5, 0.6, 0.75, 0.8])]
+
+    # --- 6. CATEGORIZE PERIODS ---
     def categorize_period(d):
         if pd.isnull(d): return "Unknown"
         y = d.year
@@ -73,7 +98,7 @@ if uploaded_file is not None:
         df['Time_Group'] = df['烤三生產日期'].apply(categorize_period)
         df = df[df['Time_Group'] != "Other"]
         
-        # Generate Virtual 2025 Full Year
+        # Virtual 2025 Full Year
         df_25 = df[df['烤三生產日期'].dt.year == 2025].copy()
         if not df_25.empty:
             df_25['Time_Group'] = "2025 (Full Year)"
@@ -81,39 +106,34 @@ if uploaded_file is not None:
     else:
         df['Time_Group'] = "Unknown"
 
-    # --- 5. QUANTITY & QUALITY GRADES ---
-    count_cols = ['A-B+', 'A-B', 'A-B-', 'B+', 'B']
-    for c in count_cols:
-        if c in df.columns:
-            df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
-        else:
-            df[c] = 0
-    df['Total_Qty'] = df[count_cols].sum(axis=1)
-
-    # --- 6. MECHANICAL FEATURES ---
-    rename_mech = {'烤漆降伏強度': 'YS', '烤漆抗拉強度': 'TS', '伸長率': 'EL'}
-    df.rename(columns=rename_mech, inplace=True)
-    mech_features = ['YS', 'TS', 'EL', 'YPE', 'HARDNESS']
-    for f in mech_features:
-        if f in df.columns:
-            df[f] = pd.to_numeric(df[f], errors='coerce')
+    df['Total_Qty'] = df[base_grades].sum(axis=1)
 
     # ==========================================
-    # DASHBOARD UI & HEALTH CHECK
+    # UI TABS GENERATION
     # ==========================================
-    with st.expander("🛠️ System Health Check (Click to expand)"):
-        st.write(f"**Total valid coils loaded:** {len(df)}")
-        if 'Thickness' in df.columns:
-            st.write("**Thickness Distribution:**", df['Thickness'].value_counts().to_dict())
-        st.write("**Periods Extracted:**", df['Time_Group'].unique())
-        st.write("**Sample Data:**")
-        st.dataframe(df[['烤三生產日期', 'Time_Group', 'Thickness', '熱軋材質', 'Total_Qty'] + count_cols].head(10))
+    tab0, tab1, tab2, tab3 = st.tabs(["0. Raw Data Check", "1. Yield Summary", "2. Distribution Analysis", "3. Control Limits & I-MR"])
 
+    # --- TAB 0: RAW DATA CHECK (For Debugging) ---
+    with tab0:
+        st.header("0. System Health & Raw Data Check")
+        st.info("Use this tab to verify if the system has correctly extracted the thickness and periods.")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Total Valid Rows", len(df))
+        if 'Actual_Thickness' in df.columns:
+            c2.write("**Thickness Count:**")
+            c2.write(df['Actual_Thickness'].value_counts().to_dict())
+        c3.write("**Periods Count:**")
+        c3.write(df['Time_Group'].value_counts().to_dict())
+        
+        st.write("### Raw Data Preview (After Processing)")
+        preview_cols = ['烤三生產日期', 'Time_Group', 'Actual_Thickness', '熱軋材質', 'Total_Qty'] + base_grades + [f for f in mech_features if f in df.columns]
+        exist_preview = [c for c in preview_cols if c in df.columns]
+        st.dataframe(df[exist_preview].head(50), use_container_width=True)
+
+    # --- SIDEBAR FILTERS ---
     st.sidebar.header("🔎 Dashboard Filters")
-    
     all_periods = sorted(df['Time_Group'].unique())
-    options_list = ["All"] + all_periods
-    ui_selection = st.sidebar.multiselect("📅 Select Period(s):", options=options_list, default=["All"])
+    ui_selection = st.sidebar.multiselect("📅 Select Period(s):", options=["All"] + all_periods, default=["All"])
     
     if "All" in ui_selection or len(ui_selection) == 0:
         selected_periods = all_periods
@@ -121,14 +141,14 @@ if uploaded_file is not None:
         selected_periods = ui_selection
         df = df[df['Time_Group'].isin(selected_periods)]
 
-    thickness_list = sorted(df['Thickness'].dropna().unique()) if 'Thickness' in df.columns else []
+    thickness_list = sorted(df['Actual_Thickness'].dropna().unique()) if 'Actual_Thickness' in df.columns else []
 
     # --- GLOBAL X-AXIS BOUNDS ---
     global_x_bounds = {}
     for feat in mech_features:
         if feat in df.columns:
-            vd = df[[feat] + count_cols].dropna(subset=[feat]).copy()
-            vd['T_Count'] = vd[count_cols].sum(axis=1)
+            vd = df[[feat] + base_grades].dropna(subset=[feat]).copy()
+            vd['T_Count'] = vd[base_grades].sum(axis=1)
             vd = vd[vd['T_Count'] > 0]
             if not vd.empty:
                 q1, q99 = np.percentile(vd[feat], 1), np.percentile(vd[feat], 99)
@@ -142,7 +162,7 @@ if uploaded_file is not None:
         for feat in features:
             if feat in data.columns:
                 vd = data.dropna(subset=[feat]).copy()
-                vd['T_Count'] = vd[count_cols].sum(axis=1)
+                vd['T_Count'] = vd[base_grades].sum(axis=1)
                 if not vd.empty:
                     fmin, fmax = global_x_bounds.get(feat, (0, 100))
                     cnts, _ = np.histogram(vd[feat], bins=np.linspace(fmin, fmax, 16), weights=vd['T_Count'])
@@ -152,32 +172,29 @@ if uploaded_file is not None:
     overall_export_data = [] 
     all_export_data = []
 
-    tab1, tab2, tab3 = st.tabs(["1. Yield Summary", "2. Distribution Analysis", "3. Control Limits & I-MR"])
-
     # --- TAB 1: YIELD SUMMARY ---
     with tab1:
         st.header("1. Quality Yield Summary")
-        group_cols = ['Time_Group', 'Thickness', '熱軋材質']
+        group_cols = ['Time_Group', 'Actual_Thickness', '熱軋材質']
         existing_group_cols = [c for c in group_cols if c in df.columns]
         
         if existing_group_cols:
-            # dropna=False ensures we don't lose rows with missing HR Material!
-            summary_df = df.groupby(existing_group_cols, dropna=False)[count_cols].sum().reset_index()
-            summary_df['Total_Qty'] = summary_df[count_cols].sum(axis=1)
-            summary_df = summary_df[summary_df['Total_Qty'] > 0]
+            # We NO LONGER filter out Total_Qty == 0 so that 0.5 and 0.8 always show up!
+            summary_df = df.groupby(existing_group_cols, dropna=False)[base_grades].sum().reset_index()
+            summary_df['Total_Qty'] = summary_df[base_grades].sum(axis=1)
             
-            for col in count_cols: 
+            for col in base_grades: 
                 summary_df[f"% {col}"] = ((summary_df[col] / summary_df['Total_Qty'].replace(0, np.nan)) * 100).fillna(0).round(1)
             
-            display_df = summary_df.rename(columns={'Time_Group': 'Period', '熱軋材質': 'HR Material'})
+            display_df = summary_df.rename(columns={'Time_Group': 'Period', 'Actual_Thickness': 'Thickness', '熱軋材質': 'HR Material'})
             
-            base_cols = ['Period', 'Thickness', 'HR Material', 'Total_Qty']
-            pct_cols = [f"% {c}" for c in count_cols]
+            b_cols = ['Period', 'Thickness', 'HR Material', 'Total_Qty']
+            p_cols = [f"% {c}" for c in base_grades]
             
-            for c in count_cols + ['Total_Qty']:
+            for c in base_grades + ['Total_Qty']:
                 if c in display_df.columns: display_df[c] = display_df[c].astype(int)
             
-            display_df = display_df[base_cols + count_cols + pct_cols]
+            display_df = display_df[b_cols + base_grades + p_cols]
             if 'Period' in display_df.columns: display_df = display_df.sort_values(by=['Period', 'Thickness'])
             
             for period in selected_periods:
@@ -219,7 +236,7 @@ if uploaded_file is not None:
         bins_arr = np.linspace(f_min, f_max, k_b + 1)
         vals_list, wgts_list, colors_list = [], [], []
         
-        for col_n in count_cols:
+        for col_n in base_grades:
             if col_n in data.columns and feat in data.columns:
                 temp_d = data[[feat, col_n]].dropna()
                 temp_d = temp_d[temp_d[col_n] > 0]
@@ -285,7 +302,7 @@ if uploaded_file is not None:
             
             st.subheader(f"🔍 Distribution by Thickness ({period})")
             for thick in thickness_list:
-                df_thick = df_p[df_p['Thickness'] == thick]
+                df_thick = df_p[df_p['Actual_Thickness'] == thick]
                 if df_thick.empty: continue
                 st.markdown(f"**📏 Thickness: {thick}**")
                 local_y = get_shared_y(df_thick, ['YS', 'TS', 'EL', 'YPE']) 
@@ -305,8 +322,8 @@ if uploaded_file is not None:
             st.subheader(f"🌐 Overall Factory Goals ({period})")
             
             period_overall_data = []
-            total_n_overall = df_p[count_cols].sum().sum()
-            seg_dist_overall = "N/A" if total_n_overall == 0 else ", ".join([f"{k}:{int(round(df_p[k].sum()/total_n_overall*100))}%" for k in count_cols])
+            total_n_overall = df_p[base_grades].sum().sum()
+            seg_dist_overall = "N/A" if total_n_overall == 0 else ", ".join([f"{k}:{int(round(df_p[k].sum()/total_n_overall*100))}%" for k in base_grades])
 
             for f in mech_features:
                 if f in df.columns:
@@ -343,7 +360,7 @@ if uploaded_file is not None:
 
             st.subheader(f"🔍 Local Control Limits & I-MR ({period})")
             for thick in thickness_list:
-                df_t = df_p[df_p['Thickness'] == thick]
+                df_t = df_p[df_p['Actual_Thickness'] == thick]
                 if df_t.empty: continue
                 
                 st.markdown(f"**📏 Thickness: {thick}**")
@@ -364,8 +381,8 @@ if uploaded_file is not None:
                             (m_s, s_s), (m_i, s_i) = calculate_stats(v, w, iqr_k)
                             plot_data_dict[f] = {'values': v, 'mean_std': m_s, 'std_std': s_s, 'mean_iqr': m_i, 'std_iqr': s_i}
                             
-                            total_n = df_t[count_cols].sum().sum()
-                            seg_dist = "N/A" if total_n == 0 else ", ".join([f"{k}:{int(round(df_t[k].sum()/total_n*100))}%" for k in count_cols])
+                            total_n = df_t[base_grades].sum().sum()
+                            seg_dist = "N/A" if total_n == 0 else ", ".join([f"{k}:{int(round(df_t[k].sum()/total_n*100))}%" for k in base_grades])
                             
                             for m_name, m_val, s_val in [("Standard", m_s, s_s), (f"IQR (k={iqr_k})", m_i, s_i)]:
                                 is_std = (m_name == "Standard")
@@ -456,7 +473,7 @@ if uploaded_file is not None:
         if 'display_df' in locals() and not display_df.empty:
             pdf.add_page(); pdf.set_font('Arial', 'B', 16); pdf.cell(0, 10, "1. YIELD SUMMARY", ln=True, align="C"); pdf.ln(5)
             pdf.set_font('Arial', 'B', 8)
-            cw_tab1 = [25, 15, 25, 15] + [12]*len(count_cols) + [12]*len(pct_cols)
+            cw_tab1 = [25, 15, 25, 15] + [12]*len(base_grades) + [12]*len(p_cols)
             for i, col in enumerate(display_df.columns): pdf.cell(cw_tab1[i] if i < len(cw_tab1) else 20, 8, clean(col), border=1, align='C')
             pdf.ln(); pdf.set_font('Arial', '', 8)
             for _, r in display_df.head(25).iterrows(): 
