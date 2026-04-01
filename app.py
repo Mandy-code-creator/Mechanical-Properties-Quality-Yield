@@ -64,7 +64,7 @@ def load_and_preprocess(file_buffer):
 
     # PERIOD CATEGORIZATION LOGIC
     def categorize_period(date_val):
-        if pd.isnull(date_val): return "Unknown"
+        if pd.isnull(date_val): return "Unknown (No Date)"
         y = date_val.year
         q3_start = pd.Timestamp(2025, 6, 29)
         q3_end = pd.Timestamp(2025, 9, 30)
@@ -79,7 +79,9 @@ def load_and_preprocess(file_buffer):
 
     if '烤三生產日期' in df.columns:
         df['Time_Group'] = df['烤三生產日期'].apply(categorize_period)
-        df = df[~df['Time_Group'].isin(["Other", "Unknown"])]
+        
+        # RESTORED "Unknown (No Date)" to prevent data loss. Only drop strict "Other" years.
+        df = df[df['Time_Group'] != "Other"]
         
         # GENERATE 2025 FULL YEAR DATA
         df_2025 = df[df['烤三生產日期'].dt.year == 2025].copy()
@@ -87,7 +89,7 @@ def load_and_preprocess(file_buffer):
             df_2025['Time_Group'] = "2025 (Full Year)"
             df = pd.concat([df, df_2025], ignore_index=True)
     else:
-        df['Time_Group'] = "Unknown"
+        df['Time_Group'] = "Unknown (No Date)"
 
     return df
 
@@ -95,7 +97,6 @@ def load_and_preprocess(file_buffer):
 uploaded_file = st.file_uploader("Upload Excel data (.xlsx)", type=["xlsx"])
 
 if uploaded_file is not None:
-    # Use cached data to prevent freezing
     raw_df = load_and_preprocess(uploaded_file)
     df = raw_df.copy()
 
@@ -164,10 +165,10 @@ if uploaded_file is not None:
         if existing_group_cols:
             summary_df = df.groupby(existing_group_cols)[count_cols].sum().reset_index()
             summary_df['Total_Qty'] = summary_df[count_cols].sum(axis=1)
-            summary_df = summary_df[summary_df['Total_Qty'] > 0]
             
+            # KEEP TOTAL = 0 ROWS TO PREVENT DISAPPEARING THICKNESSES
             for col in count_cols: 
-                summary_df[f"% {col.replace('_Qty','')}"] = (summary_df[col]/summary_df['Total_Qty']*100).fillna(0).round(1)
+                summary_df[f"% {col.replace('_Qty','')}"] = ((summary_df[col] / summary_df['Total_Qty'].replace(0, np.nan)) * 100).fillna(0).round(1)
             
             display_df = summary_df.rename(columns={'Time_Group': 'Period', '熱軋材質': 'HR Material'})
             for col in count_cols: display_df.rename(columns={col: col.replace('_Qty','')}, inplace=True)
@@ -289,7 +290,7 @@ if uploaded_file is not None:
                         plot_qc_dist(ax, df_p, f, f"{f} (Overall - {period})", ov_y, is_right=(i%2!=0))
                         st.pyplot(fig)
                         fig.savefig(f"overall_{f}_{safe_p}.png", bbox_inches='tight')
-                        plt.close(fig) # <-- BỘ GIẢI PHÓNG RAM
+                        plt.close(fig)
             
             st.subheader(f"🔍 Distribution by Thickness ({period})")
             for thick in thickness_list:
@@ -305,7 +306,7 @@ if uploaded_file is not None:
                             plot_qc_dist(ax, df_thick, f, f"{f} (Thick: {thick})", local_y, is_right=(i%2!=0))
                             st.pyplot(fig)
                             fig.savefig(f"dist_{f}_{thick}_{safe_p}.png", bbox_inches='tight')
-                            plt.close(fig) # <-- BỘ GIẢI PHÓNG RAM
+                            plt.close(fig)
             st.markdown("---")
 
         # TAB 3 VISUALS
@@ -440,7 +441,7 @@ if uploaded_file is not None:
                             fig.tight_layout(); fig.subplots_adjust(right=0.85)
                             st.pyplot(fig)
                             fig.savefig(f"imr_{f}_{thick}_{safe_p}.png", bbox_inches='tight')
-                            plt.close(fig) # <-- BỘ GIẢI PHÓNG RAM
+                            plt.close(fig)
             st.markdown("---")
 
     # --- EXPORT SECTION ---
