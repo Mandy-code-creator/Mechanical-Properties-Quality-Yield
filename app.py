@@ -188,16 +188,12 @@ if uploaded_file is not None:
                         plot_dist(ax, df_t, f, f"{f} (Thick: {thick})", ly)
                         st.pyplot(fig); plt.close(fig)
 
-    # --- PHẦN 2: CODE VIẾT TIẾP CHO TAB 3 (Dán vào cuối file app.py) ---
+   # --- TAB 3: DIAGNOSTIC MAP & AUTO-INSIGHTS ---
     with tab3:
-        st.header("🔍 Root Cause & Diagnostic Analysis")
-        st.info("Phân tích chuyên sâu để tìm ra 'thủ phạm' gây lỗi chất lượng.")
-
-        # Định nghĩa lại nhóm lỗi để tính toán cho Tab 3
-        good_g = ['A-B+', 'A-B']
-        bad_g = ['A-B-', 'B+', 'B']
+        st.header("🔍 Quality Root Cause Analysis")
+        st.info("Automated diagnostic tools to identify and explain production defects.")
         
-# 3.1 HEATMAP
+        # 3.1 HEATMAP
         defect_str = ", ".join(bad_grades)
         st.subheader(f"1. Defect Hotspot Map (Defect Rate %: {defect_str})")
         df_filtered['Bad_Qty'] = df_filtered[bad_grades].sum(axis=1)
@@ -214,14 +210,23 @@ if uploaded_file is not None:
             ax.set_ylabel("Specification (Thickness & Material)")
             ax.set_xlabel("Production Period")
             st.pyplot(fig); plt.close(fig)
+            
+            # --- AUTO-INSIGHT 1: HEATMAP ---
+            max_val = heat_data.max().max()
+            if max_val > 0:
+                max_idx = heat_data.stack().idxmax()
+                st.error(f"🔥 **Automated Insight:** The most critical hotspot is **{max_idx[0]}** during **{max_idx[1]}** with a defect rate of **{max_val:.1f}%**. Immediate investigation recommended.")
+            else:
+                st.success("✅ **Automated Insight:** No significant defects found in the current selection. Production is stable.")
 
         # 3.2 PARETO
+        st.markdown("---")
         st.subheader("2. Pareto Analysis: Top Defect Categories")
         defect_sums = df_filtered[bad_grades].sum().sort_values(ascending=False)
         if defect_sums.sum() > 0:
             pareto_df = pd.DataFrame({'Count': defect_sums})
             pareto_df['Cum_Pct'] = pareto_df['Count'].cumsum() / pareto_df['Count'].sum() * 100
-            fig, ax1 = plt.subplots(figsize=(10, 5))
+            fig, ax1 = plt.subplots(figsize=(10, 4))
             ax1.bar(pareto_df.index, pareto_df['Count'], color="#d62728", alpha=0.8)
             ax1.set_ylabel("Number of Defective Coils")
             ax2 = ax1.twinx()
@@ -229,20 +234,41 @@ if uploaded_file is not None:
             ax2.axhline(80, color="orange", linestyle="--")
             plt.title("Pareto Principle: Focusing on 80% of Quality Issues")
             st.pyplot(fig); plt.close(fig)
+            
+            # --- AUTO-INSIGHT 2: PARETO ---
+            top_defect = pareto_df['Count'].idxmax()
+            top_pct = pareto_df.loc[top_defect, 'Count'] / pareto_df['Count'].sum() * 100
+            st.warning(f"⚠️ **Automated Insight:** **{top_defect}** is the primary defect category, accounting for **{top_pct:.1f}%** of all defective coils. Focus corrective actions here first.")
 
         # 3.3 OVERLAY
+        st.markdown("---")
         st.subheader("3. GOOD vs BAD Property Shift Analysis")
         feat_diag = st.selectbox("Select property for diagnosis:", [f for f in ['YS', 'TS', 'EL', 'YPE'] if f in df_filtered.columns])
-        fig, ax = plt.subplots(figsize=(10, 5))
+        fig, ax = plt.subplots(figsize=(10, 4))
         g_vals = df_filtered[df_filtered[good_grades].sum(axis=1) > 0][feat_diag].dropna()
         b_vals = df_filtered[df_filtered[bad_grades].sum(axis=1) > 0][feat_diag].dropna()
+        
         if not g_vals.empty:
             sns.kdeplot(g_vals, ax=ax, label="GOOD (A-B+, A-B)", fill=True, color="green", alpha=0.3)
         if not b_vals.empty:
             sns.kdeplot(b_vals, ax=ax, label="BAD (A-B-, B+, B)", fill=True, color="red", alpha=0.3)
+            
         ax.set_title(f"Distribution Shift: {feat_diag} (Good vs Bad)")
         ax.legend()
         st.pyplot(fig); plt.close(fig)
+        
+        # --- AUTO-INSIGHT 3: OVERLAY ---
+        if not g_vals.empty and not b_vals.empty:
+            g_mean = g_vals.mean()
+            b_mean = b_vals.mean()
+            diff = b_mean - g_mean
+            
+            # Kiểm tra xem độ lệch có đáng kể không (ví dụ: lớn hơn 20% độ lệch chuẩn của hàng tốt)
+            if abs(diff) > (g_vals.std() * 0.2):
+                direction = "HIGHER" if diff > 0 else "LOWER"
+                st.error(f"📉 **Diagnostic Insight:** BAD coils have a noticeably **{direction} average {feat_diag}** ({b_mean:.1f}) compared to GOOD coils ({g_mean:.1f}). This property shift is highly likely contributing to the defects.")
+            else:
+                st.info(f"ℹ️ **Diagnostic Insight:** The average {feat_diag} is very similar between GOOD and BAD coils ({g_mean:.1f} vs {b_mean:.1f}). This parameter might NOT be the root cause. Try checking another property.")
 
     # --- EXPORT SECTION ---
     # (Giữ nguyên logic Export ban đầu của bạn...)
