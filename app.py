@@ -201,21 +201,46 @@ if uploaded_file is not None:
             'YPE': {'min': 4, 'max': None, 'target': None}
         }
         
-        # --- STEP 1: HEATMAP ---
+        # --- STEP 1: HEATMAP (OPTIMIZED WEIGHTED AVERAGE) ---
         defect_str = ", ".join(bad_grades)
         st.subheader(f"Step 1: Defect Hotspot Map (% Rate: {defect_str})")
         
-        df_filtered['Defect_Rate'] = (df_filtered['Bad_Qty'] / df_filtered['Total_Qty'] * 100).fillna(0)
+        # Nhãn quy cách
         df_filtered['Spec_Label'] = df_filtered['Actual_Thickness'].astype(str) + "mm (" + df_filtered['HR_Material'] + ")"
         
-        heat_data = df_filtered.groupby(['Spec_Label', 'Time_Group'])['Defect_Rate'].mean().unstack()
+        # THUẬT TOÁN ĐÚNG: Tính Weighted Average cho từng nhóm Spec + Time
+        heat_data = df_filtered.groupby(['Spec_Label', 'Time_Group']).apply(
+            lambda x: (x['Bad_Qty'].sum() / x['Total_Qty'].sum() * 100) if x['Total_Qty'].sum() > 0 else 0
+        ).unstack()
 
         if not heat_data.empty:
             fig, ax = plt.subplots(figsize=(12, 6))
             import seaborn as sns
-            sns.heatmap(heat_data, annot=True, fmt=".1f", cmap="YlOrRd", linewidths=.5, ax=ax)
-            ax.set_title(f"HOTSPOT MAP: % DEFECT RATE ({defect_str})", fontsize=12, fontweight='bold', color='#d62728', pad=15)
+            
+            # Đặt vmax (ví dụ 30%) để làm nổi bật sự tương phản màu sắc
+            # Ô nào > 30% sẽ đỏ đậm max level
+            vmax_threshold = 30.0 if heat_data.max().max() > 30 else heat_data.max().max()
+            
+            sns.heatmap(heat_data, annot=True, fmt=".1f", cmap="YlOrRd", linewidths=.5, vmax=vmax_threshold, ax=ax)
+            ax.set_title(f"HOTSPOT MAP: ACTUAL DEFECT RATE ({defect_str})", fontsize=12, fontweight='bold', color='#d62728', pad=15)
+            ax.set_ylabel("Specification (Thickness & Material)")
+            ax.set_xlabel("Production Period")
             st.pyplot(fig); plt.close(fig)
+            
+            # --- AUTO DETECT TOP 3 HOTSPOTS ---
+            st.markdown("### 🚨 Top 3 Critical Hotspots (Action Required)")
+            # Biến đổi bảng heatmap thành dạng cột để dễ sort
+            stacked_data = heat_data.stack().reset_index()
+            stacked_data.columns = ['Spec', 'Period', 'Defect_Rate']
+            top_3 = stacked_data[stacked_data['Defect_Rate'] > 0].sort_values(by='Defect_Rate', ascending=False).head(3)
+            
+            if not top_3.empty:
+                for idx, row in top_3.iterrows():
+                    # Cảnh báo màu đỏ cho lỗi > 15%, màu cam cho lỗi > 5%
+                    alert_color = "🔴" if row['Defect_Rate'] > 15 else "🟠"
+                    st.error(f"{alert_color} **{row['Spec']}** during **{row['Period']}**: Defect Rate hits **{row['Defect_Rate']:.1f}%**")
+            else:
+                st.success("✅ Quy trình đang ổn định. Không phát hiện điểm nóng.")
 
         # --- STEP 2: PARETO ---
         st.markdown("---")
