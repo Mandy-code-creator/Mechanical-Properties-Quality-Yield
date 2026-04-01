@@ -141,9 +141,9 @@ if uploaded_file is not None:
 
     tab1, tab2, tab3 = st.tabs(["1. Yield Summary", "2. Distribution Analysis", "3. Control Limits & I-MR"])
 
-    # --- TAB 1: YIELD ---
+# --- TAB 1: YIELD ---
     with tab1:
-        st.header("1. Quality Yield Summary (Period ➔ Thick ➔ Material)")
+        st.header("1. Quality Yield Summary (Thick ➔ Material)")
         group_cols = ['Time_Group', '厚度', '熱軋材質']
         existing_group_cols = [col for col in group_cols if col in df.columns]
         
@@ -167,7 +167,17 @@ if uploaded_file is not None:
             display_df = display_df[base_cols + grade_cols + pct_cols]
             if 'Period' in display_df.columns: display_df = display_df.sort_values(by=['Period', 'Thickness'])
             
-            st.dataframe(display_df, use_container_width=True, hide_index=True)
+            # --- 🛠️ TÁCH BẢNG CHO TỪNG GIAI ĐOẠN (MỚI) ---
+            for period in selected_periods:
+                period_data = display_df[display_df['Period'] == period]
+                if not period_data.empty:
+                    # Tạo tiêu đề to cho từng giai đoạn
+                    st.markdown(f"### 📅 Giai đoạn: **{period}**")
+                    # Hiển thị bảng và ẨN đi cột Period để tránh trùng lặp thông tin
+                    st.dataframe(period_data.drop(columns=['Period'], errors='ignore'), use_container_width=True, hide_index=True)
+            
+            st.markdown("---")
+            # ----------------------------------------------
             
             towrite_summary = io.BytesIO()
             display_df.to_excel(towrite_summary, index=False, engine='openpyxl')
