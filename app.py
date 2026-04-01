@@ -29,50 +29,49 @@ if uploaded_file is not None:
     }
     df.rename(columns=rename_map, inplace=True)
     
-    # 2.1. DATA PREPROCESSING & TYPE CASTING
+    # --- 2. DATA PREPROCESSING & TYPE CASTING ---
     if '年度' in df.columns:
         df['年度'] = df['年度'].astype(str).str.replace(r'\.0$', '', regex=True)
         
-    # --- BẮT ĐÚNG ĐỊNH DẠNG 20240101 (YYYYMMDD) ---
+    # --- 🛠️ FIX LỖI NGÀY THÁNG ĐỊNH DẠNG DÍNH LIỀN (YYYYMMDD) ---
     if '烤三生產日期' in df.columns:
-        # Ép về chuỗi (chống trôi số thập phân của Excel) và gỡ lỗi '.0'
         date_str = df['烤三生產日期'].astype(str).str.replace(r'\.0$', '', regex=True)
-        # Dùng format='%Y%m%d' để ép máy tính hiểu chính xác cấu trúc 2024-01-01
-        df['烤三生產日期'] = pd.to_datetime(date_str, format='%Y%m%d', errors='coerce')
-    # ---------------------------------------------
-        
+        # Ép máy tính hiểu cấu trúc số dính liền, nếu lỗi sẽ dự phòng bằng cách parse tự do
+        df['烤三生產日期'] = pd.to_datetime(date_str, format='%Y%m%d', errors='coerce').fillna(pd.to_datetime(date_str, errors='coerce'))
+
     if '厚度' in df.columns:
         df['厚度'] = pd.to_numeric(df['厚度'], errors='coerce')
+        
     if '熱軋材質' in df.columns:
         df['熱軋材質'] = df['熱軋材質'].astype(str).str.strip()
 
-    # --- ⚙️ LOGIC THỜI GIAN ĐẶC THÙ (Q3: 29/06 - 30/09) ---
+    # --- ⚙️ LOGIC THỜI GIAN ĐẶC THÙ (Q3: 29/06 - 30/09) VÀ BỎ SỐ THỨ TỰ ---
     def categorize_period(date_val):
-        if pd.isnull(date_val): return "6. Unknown/No Date"
+        if pd.isnull(date_val): return "Unknown / No Date"
         
         y = date_val.year
         q3_start = pd.Timestamp(2025, 6, 29)
         q3_end = pd.Timestamp(2025, 9, 30)
 
         if y == 2024:
-            return "1. 2024 (Full Year)"
+            return "2024 (Full Year)"
         elif y == 2025:
             if date_val < q3_start:
-                return "2. 2025 H1 (Đến 28/06)"
+                return "2025 H1 (Đến 28/06)"
             elif q3_start <= date_val <= q3_end:
-                return "3. 2025 Q3 (29/06 - 30/09)"
+                return "2025 Q3 (29/06 - 30/09)"
             else:
-                return "4. 2025 Q4"
+                return "2025 Q4"
         elif y == 2026:
-            return "5. 2026 Q1"
-        return "6. Other"
+            return "2026 Q1"
+        return "Other"
 
     if '烤三生產日期' in df.columns:
         df['Time_Group'] = df['烤三生產日期'].apply(categorize_period)
     else:
         df['Time_Group'] = "Unknown"
 
-    # --- BỘ LỌC SIDEBAR ---
+    # --- BỘ LỌC SIDEBAR THEO THỜI GIAN ---
     st.sidebar.header("🔎 Dashboard Filters")
     all_periods = sorted(df['Time_Group'].unique())
     selected_periods = st.sidebar.multiselect("📅 Chọn giai đoạn (Periods):", options=all_periods, default=all_periods)
@@ -80,14 +79,22 @@ if uploaded_file is not None:
     if selected_periods:
         df = df[df['Time_Group'].isin(selected_periods)]
 
+    # --- 🛡️ TRẠM GÁC ĐỘ DÀY (LỌC DỮ LIỆU RÁC) ---
+    standard_thickness = [0.5, 0.6, 0.75, 0.8]
+    if '厚度' in df.columns:
+        # Giữ lại các dòng có độ dày chuẩn, loại bỏ các số lẻ tẻ gõ nhầm (vd: 0.63)
+        df = df[df['厚度'].isin(standard_thickness)]
+        thickness_list = sorted(df['厚度'].dropna().unique(), key=lambda x: float(x))
+    else:
+        thickness_list = []
+
+    # Xử lý các cột Số lượng và Cơ tính
     count_cols = [col for col in ['A-B+數', 'A-B數', 'A-B-數', 'B+數', 'B數'] if col in df.columns]
     for col in count_cols: df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
     df['Total_Count'] = df[count_cols].sum(axis=1)
 
     mech_features = [feat for feat in ['YS', 'TS', 'EL', 'YPE', 'HARDNESS'] if feat in df.columns]
     for feat in mech_features: df[feat] = pd.to_numeric(df[feat], errors='coerce')
-
-    thickness_list = sorted(df['厚度'].dropna().unique(), key=lambda x: float(x))
 
     # --- CỐ ĐỊNH TRỤC X ---
     global_x_bounds = {}
@@ -232,6 +239,7 @@ if uploaded_file is not None:
     for period in selected_periods:
         df_p = df[df['Time_Group'] == period]
         if df_p.empty: continue
+        # Thay thế ký tự đặc biệt để làm tên file không bị lỗi
         safe_p = "".join([c if c.isalnum() else "_" for c in period])
 
         # VẼ TAB 2 THEO PERIOD
