@@ -36,13 +36,12 @@ if uploaded_file is not None:
     }
     df.rename(columns=rename_map, inplace=True)
 
-    # Khởi tạo biến toàn cục cho Export
     all_export_data = []
     overall_export_data = [] 
     
     # --- 2. DATA PREPROCESSING ---
     
-    # 2.1. Khai báo & Ép kiểu dữ liệu Quản lý & Nguồn gốc
+    # 2.1. Ép kiểu dữ liệu (Sử dụng cột 厚度 chuẩn)
     if '年度' in df.columns:
         df['年度'] = df['年度'].astype(str).str.replace(r'\.0$', '', regex=True)
         
@@ -55,7 +54,7 @@ if uploaded_file is not None:
     if '熱軋材質' in df.columns:
         df['熱軋材質'] = df['熱軋材質'].astype(str).str.strip()
 
-    # --- ⚙️ BỘ LỌC THỜI GIAN CHIẾN LƯỢC ---
+    # --- ⚙️ LOGIC THỜI GIAN THEO YÊU CẦU SẾP ---
     def categorize_period(date_val):
         if pd.isnull(date_val): return "6. Unknown/No Date"
         y = date_val.year
@@ -76,7 +75,22 @@ if uploaded_file is not None:
     else:
         df['Time_Group'] = "Unknown"
 
-    # 2.2. Xử lý cột Số lượng (Phân loại Grade)
+    # --- 🔎 BỘ LỌC TOÀN CỤC (GLOBAL FILTER) TRÊN SIDEBAR ---
+    st.sidebar.header("🔎 Global Dashboard Filters")
+    all_periods = sorted(df['Time_Group'].unique())
+    selected_periods = st.sidebar.multiselect(
+        "📅 Select Time Period(s):", 
+        options=all_periods, 
+        default=all_periods
+    )
+    
+    # Lọc DataFrame gốc theo thời gian người dùng chọn
+    if selected_periods:
+        df = df[df['Time_Group'].isin(selected_periods)]
+
+    st.sidebar.markdown("---")
+
+    # 2.2. Xử lý cột Số lượng 
     count_cols = ['A-B+數', 'A-B數', 'A-B-數', 'B+數', 'B數']
     count_cols = [col for col in count_cols if col in df.columns]
     
@@ -91,9 +105,10 @@ if uploaded_file is not None:
     for feat in mech_features:
         df[feat] = pd.to_numeric(df[feat], errors='coerce')
 
-    thickness_list = sorted(df['厚度歸類'].dropna().unique(), key=lambda x: float(x))
+    # Chuyển đổi hoàn toàn sang sử dụng cột 厚度 thay vì 厚度歸類
+    thickness_list = sorted(df['厚度'].dropna().unique(), key=lambda x: float(x))
 
-    # --- TÍNH TOÁN KHUNG TRỤC X CỐ ĐỊNH (GLOBAL X-AXIS) ---
+    # --- TÍNH TOÁN KHUNG TRỤC X CỐ ĐỊNH ---
     global_x_bounds = {}
     for feat in mech_features:
         vd = df[[feat] + count_cols].dropna(subset=[feat]).copy()
@@ -135,7 +150,8 @@ if uploaded_file is not None:
     with tab1:
         st.header("1. Quality Yield Summary (Period ➔ Thickness ➔ Material)")
         
-        group_cols = ['Time_Group', '厚度歸類', '熱軋材質']
+        # Nhóm dữ liệu theo Time_Group -> 厚度 -> 熱軋材質
+        group_cols = ['Time_Group', '厚度', '熱軋材質']
         existing_group_cols = [col for col in group_cols if col in df.columns]
         
         if existing_group_cols:
@@ -149,7 +165,7 @@ if uploaded_file is not None:
             display_df = summary_df.copy()
             rename_dict = {
                 'Time_Group': 'Period', 
-                '厚度歸類': 'Thickness',
+                '厚度': 'Thickness',
                 '熱軋材質': 'HR Material'
             }
             display_df.rename(columns=rename_dict, inplace=True)
@@ -187,7 +203,8 @@ if uploaded_file is not None:
 
     # --- TAB 2: DISTRIBUTION ANALYSIS ---
     with tab2:
-        st.header("2. Mechanical Properties Distribution Analysis")
+        st.header(f"2. Mechanical Properties Distribution Analysis")
+        st.caption("Data filtered by selected time periods.")
 
         def plot_qc_dist(ax, data, feat, title, custom_y_limit, is_right=False):
             k_b = 15 
@@ -264,10 +281,13 @@ if uploaded_file is not None:
 
         st.markdown("---")
         
-        st.subheader("🔍 Detailed Distribution per Thickness Category")
+        st.subheader("🔍 Detailed Distribution per Thickness")
+        # Sử dụng cột 厚度 để chia nhóm biểu đồ
         for thick in thickness_list:
-            df_thick = df[df['厚度歸類'] == thick]
-            st.markdown(f"### 📏 Category: **{thick}**")
+            df_thick = df[df['厚度'] == thick]
+            if df_thick.empty: continue
+            
+            st.markdown(f"### 📏 Thickness: **{thick}**")
             local_y = get_shared_y(df_thick, ['YS', 'TS', 'EL', 'YPE']) 
             cols_dist = st.columns(2)
             for idx, feat in enumerate(['YS', 'TS', 'EL', 'YPE']):
@@ -279,9 +299,10 @@ if uploaded_file is not None:
                         fig.savefig(f"dist_{feat}_{thick}.png", bbox_inches='tight')
             st.markdown("---")
 
-    # --- TAB 3: OPTIMIZATION & I-MR CHARTS (MULTI-METHOD & CLEAN UI) ---
+    # --- TAB 3: OPTIMIZATION & I-MR CHARTS ---
     with tab3:
         st.header("3. Production Control Limits & Goals (A-B & Above Focused)")
+        st.caption("Data filtered by selected time periods.")
         
         st.markdown("##### ⚙️ Parameter Configuration")
         col1, col2, col3, col4 = st.columns(4)
@@ -374,9 +395,12 @@ if uploaded_file is not None:
         st.subheader("🔍 Local Control Limits & I-MR Trending")
         plot_data_dict = {}
 
+        # Sử dụng cột 厚度
         for thick in thickness_list:
-            st.markdown(f"#### 📏 Thickness Category: **{thick}**")
-            df_t = df[df['厚度歸類'] == thick]
+            df_t = df[df['厚度'] == thick]
+            if df_t.empty: continue
+            
+            st.markdown(f"#### 📏 Thickness: **{thick}**")
             plot_data_dict[thick] = {}
             thick_status = []
             
@@ -426,6 +450,7 @@ if uploaded_file is not None:
                         thick_status.append(row)
                         
                         exp_row_excel = row.copy()
+                        exp_row_excel['Thickness'] = thick
                         exp_row_excel['Feature'] = feat
                         exp_row_excel['Current Limit (2025/12)'] = spec_str
                         exp_row_excel['Segment Distribution'] = seg_dist
@@ -523,14 +548,13 @@ if uploaded_file is not None:
         pdf_ov.add_page()
         pdf_ov.set_font('Arial', 'B', 16); pdf_ov.cell(0, 10, "QC MECHANICAL PROPERTIES - EXECUTIVE SUMMARY", ln=True, align="C"); pdf_ov.ln(5)
         
-        # In bảng Tab 1 (Pivot Data) nếu có
         if 'display_df' in locals() and not display_df.empty:
             pdf_ov.set_font('Arial', 'B', 12); pdf_ov.cell(0, 10, "1. Quality Yield Summary", ln=True)
             pdf_ov.set_font('Arial', 'B', 8)
             cw_tab1 = [25, 15, 25, 15] + [12]*len(grade_cols) + [12]*len(pct_cols)
             for i, col in enumerate(display_df.columns): pdf_ov.cell(cw_tab1[i] if i < len(cw_tab1) else 20, 8, clean(col), border=1, align='C')
             pdf_ov.ln(); pdf_ov.set_font('Arial', '', 8)
-            for _, r in display_df.head(20).iterrows(): # Giới hạn 20 dòng để tránh tràn trang PDF
+            for _, r in display_df.head(20).iterrows(): 
                 for i, v in enumerate(r): pdf_ov.cell(cw_tab1[i] if i < len(cw_tab1) else 20, 8, clean(v), border=1, align='C')
                 pdf_ov.ln()
             if len(display_df) > 20: pdf_ov.cell(0, 10, "...(See Excel for full pivot data)", ln=True)
@@ -594,6 +618,7 @@ if uploaded_file is not None:
             for i, h in enumerate(heads): pdf.cell(c_w3[i], 7, clean(h), border=1, align='C')
             pdf.ln(); pdf.set_font('Arial', '', 7)
             
+            # Khôi phục PDF theo nhóm độ dày
             for row in thick_status:
                 v_list = [row["Feature"], row["Method"], row["Current Limit (2025/12)"], row["Segment Distribution"], str(row["TARGET GOAL"]), str(row["TOLERANCE"]), row[f"MILL RANGE {sigma_mill}σ"], row[f"RELEASE RANGE {sigma_release}σ"]]
                 for i, v in enumerate(v_list): pdf.cell(c_w3[i], 7, clean(v), border=1, align='C')
