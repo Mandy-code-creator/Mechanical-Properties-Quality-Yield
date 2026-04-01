@@ -74,9 +74,24 @@ if uploaded_file is not None:
     # --- BỘ LỌC SIDEBAR THEO THỜI GIAN ---
     st.sidebar.header("🔎 Dashboard Filters")
     all_periods = sorted(df['Time_Group'].unique())
-    selected_periods = st.sidebar.multiselect("📅 Chọn giai đoạn (Periods):", options=all_periods, default=all_periods)
     
-    if selected_periods:
+    # 1. Thêm lựa chọn "All (Tất cả)" lên đầu danh sách
+    options_list = ["All (Tất cả)"] + all_periods
+    
+    # 2. Thiết lập hiển thị mặc định chỉ 1 tag duy nhất cho sang trọng
+    ui_selection = st.sidebar.multiselect(
+        "📅 Chọn giai đoạn (Periods):", 
+        options=options_list, 
+        default=["All (Tất cả)"]
+    )
+    
+    # 3. Logic xử lý "tàng hình"
+    if "All (Tất cả)" in ui_selection or len(ui_selection) == 0:
+        # Nếu chọn All (hoặc lỡ tay xóa hết tag), hệ thống ngầm hiểu là lấy toàn bộ
+        selected_periods = all_periods
+    else:
+        # Nếu chọn từng mốc cụ thể
+        selected_periods = ui_selection
         df = df[df['Time_Group'].isin(selected_periods)]
 
     # --- 🛡️ TRẠM GÁC ĐỘ DÀY (LỌC DỮ LIỆU RÁC) ---
