@@ -178,6 +178,55 @@ if uploaded_file is not None:
                         fig, ax = plt.subplots(figsize=(8, 4.5))
                         plot_dist(ax, df_t, f, f"{f} (Thick: {thick})", ly)
                         st.pyplot(fig); plt.close(fig)
+    # --- TAB 3: ROOT CAUSE ANALYSIS ---
+    with tab3:
+        st.header("🔍 Root Cause Analysis")
+        
+        # --- 3.1 PARETO CHART ---
+        st.subheader("1. Pareto Chart: Defect Categories")
+        defect_sums = df_filtered[bad_grades].sum().sort_values(ascending=False)
+        if defect_sums.sum() > 0:
+            defect_df = pd.DataFrame({'Count': defect_sums})
+            defect_df['Cumulative %'] = defect_df['Count'].cumsum() / defect_df['Count'].sum() * 100
+            
+            fig, ax1 = plt.subplots(figsize=(10, 5))
+            ax1.bar(defect_df.index, defect_df['Count'], color="C3")
+            ax2 = ax1.twinx()
+            ax2.plot(defect_df.index, defect_df['Cumulative %'], color="C0", marker="D", ms=5)
+            ax2.axhline(80, color="orange", linestyle="--")
+            ax1.set_ylabel("Count (Coils)")
+            ax2.set_ylabel("Cumulative Percentage (%)")
+            plt.title("Defect Distribution (Pareto)")
+            st.pyplot(fig); plt.close(fig)
+        else:
+            st.write("No defects found in the selected period.")
+
+        # --- 3.2 OVERLAY GOOD VS BAD ---
+        st.subheader("2. Overlay Analysis: GOOD vs BAD Mechanical Properties")
+        feat_to_check = st.selectbox("Select feature to analyze Root Cause:", mech_features)
+        
+        fig, ax = plt.subplots(figsize=(10, 5))
+        # Good coils
+        good_data = df_filtered[df_filtered['Good_Qty'] > 0][feat_to_check].dropna()
+        # Bad coils
+        bad_data = df_filtered[df_filtered['Bad_Qty'] > 0][feat_to_check].dropna()
+        
+        if not good_data.empty:
+            sns.kdeplot(good_data, ax=ax, label="GOOD (A-B+, A-B)", fill=True, color="green", alpha=0.3)
+        if not bad_data.empty:
+            sns.kdeplot(bad_data, ax=ax, label="BAD (A-B-, B+, B)", fill=True, color="red", alpha=0.3)
+        
+        ax.set_title(f"Property Shift: {feat_to_check} (Good vs Bad)")
+        ax.legend()
+        st.pyplot(fig); plt.close(fig)
+        st.info("💡 Nếu hình màu ĐỎ lệch hẳn sang trái hoặc phải so với hình màu XANH, đó chính là nguyên nhân gây lỗi.")
+
+        # --- 3.3 BOXPLOT BY THICKNESS ---
+        st.subheader("3. Variability Analysis by Thickness")
+        fig, ax = plt.subplots(figsize=(12, 6))
+        sns.boxplot(data=df_filtered, x='Actual_Thickness', y=feat_to_check, palette="viridis", ax=ax)
+        ax.set_title(f"{feat_to_check} Variation across Thicknesses")
+        st.pyplot(fig); plt.close(fig)                    
     # --- EXPORT SECTION ---
     st.sidebar.header("📥 Export Options")
     if st.sidebar.button("Download Detailed Excel"):
