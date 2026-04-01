@@ -188,88 +188,105 @@ if uploaded_file is not None:
                         plot_dist(ax, df_t, f, f"{f} (Thick: {thick})", ly)
                         st.pyplot(fig); plt.close(fig)
 
-   # --- TAB 3: DIAGNOSTIC MAP & AUTO-INSIGHTS ---
+# --- TAB 3: DIAGNOSTIC FLOW (4 STEPS) ---
     with tab3:
-        st.header("🔍 Quality Root Cause Analysis")
-        st.info("Automated diagnostic tools to identify and explain production defects.")
+        st.header("🔍 4-Step Root Cause Diagnostic Flow")
         
-        # 3.1 HEATMAP
+        # --- STEP 1: HEATMAP ---
         defect_str = ", ".join(bad_grades)
-        st.subheader(f"1. Defect Hotspot Map (Defect Rate %: {defect_str})")
-        df_filtered['Bad_Qty'] = df_filtered[bad_grades].sum(axis=1)
+        st.subheader(f"Step 1: Locate the Hotspot (% Defect Rate: {defect_str})")
         df_filtered['Defect_Rate'] = (df_filtered['Bad_Qty'] / df_filtered['Total_Qty'] * 100).fillna(0)
         df_filtered['Spec_Label'] = df_filtered['Actual_Thickness'].astype(str) + "mm (" + df_filtered['HR_Material'] + ")"
         
         heat_data = df_filtered.groupby(['Spec_Label', 'Time_Group'])['Defect_Rate'].mean().unstack()
 
         if not heat_data.empty:
-            fig, ax = plt.subplots(figsize=(12, 7))
+            fig, ax = plt.subplots(figsize=(12, 6))
             sns.heatmap(heat_data, annot=True, fmt=".1f", cmap="YlOrRd", linewidths=.5, ax=ax)
-            ax.set_title(f"HOTSPOT MAP: % DEFECT RATE ({defect_str})\n(Redder = Higher Defect Rate)", 
-                         fontsize=12, fontweight='bold', color='#d62728', pad=20)
+            ax.set_title("HOTSPOT MAP: Redder = Higher Defect Rate", fontsize=12, fontweight='bold', color='#d62728', pad=15)
             ax.set_ylabel("Specification (Thickness & Material)")
             ax.set_xlabel("Production Period")
             st.pyplot(fig); plt.close(fig)
-            
-            # --- AUTO-INSIGHT 1: HEATMAP ---
-            max_val = heat_data.max().max()
-            if max_val > 0:
-                max_idx = heat_data.stack().idxmax()
-                st.error(f"🔥 **Automated Insight:** The most critical hotspot is **{max_idx[0]}** during **{max_idx[1]}** with a defect rate of **{max_val:.1f}%**. Immediate investigation recommended.")
-            else:
-                st.success("✅ **Automated Insight:** No significant defects found in the current selection. Production is stable.")
 
-        # 3.2 PARETO
+        # --- STEP 2: PARETO ---
         st.markdown("---")
-        st.subheader("2. Pareto Analysis: Top Defect Categories")
+        st.subheader("Step 2: Identify Main Defect Category (Pareto)")
         defect_sums = df_filtered[bad_grades].sum().sort_values(ascending=False)
         if defect_sums.sum() > 0:
             pareto_df = pd.DataFrame({'Count': defect_sums})
             pareto_df['Cum_Pct'] = pareto_df['Count'].cumsum() / pareto_df['Count'].sum() * 100
-            fig, ax1 = plt.subplots(figsize=(10, 4))
+            fig, ax1 = plt.subplots(figsize=(8, 4))
             ax1.bar(pareto_df.index, pareto_df['Count'], color="#d62728", alpha=0.8)
-            ax1.set_ylabel("Number of Defective Coils")
+            ax1.set_ylabel("Defective Coils")
             ax2 = ax1.twinx()
             ax2.plot(pareto_df.index, pareto_df['Cum_Pct'], color="#1f77b4", marker="D", ms=5)
             ax2.axhline(80, color="orange", linestyle="--")
-            plt.title("Pareto Principle: Focusing on 80% of Quality Issues")
             st.pyplot(fig); plt.close(fig)
-            
-            # --- AUTO-INSIGHT 2: PARETO ---
-            top_defect = pareto_df['Count'].idxmax()
-            top_pct = pareto_df.loc[top_defect, 'Count'] / pareto_df['Count'].sum() * 100
-            st.warning(f"⚠️ **Automated Insight:** **{top_defect}** is the primary defect category, accounting for **{top_pct:.1f}%** of all defective coils. Focus corrective actions here first.")
 
-        # 3.3 OVERLAY
+        # --- STEP 3: OVERLAY ---
         st.markdown("---")
-        st.subheader("3. GOOD vs BAD Property Shift Analysis")
-        feat_diag = st.selectbox("Select property for diagnosis:", [f for f in ['YS', 'TS', 'EL', 'YPE'] if f in df_filtered.columns])
+        st.subheader("Step 3: Property Shift Analysis (GOOD vs BAD)")
+        active_mechs = [f for f in ['YS', 'TS', 'EL', 'YPE'] if f in df_filtered.columns]
+        feat_diag = st.selectbox("Select property to diagnose shift:", active_mechs, key="diag_feat")
+        
         fig, ax = plt.subplots(figsize=(10, 4))
-        g_vals = df_filtered[df_filtered[good_grades].sum(axis=1) > 0][feat_diag].dropna()
-        b_vals = df_filtered[df_filtered[bad_grades].sum(axis=1) > 0][feat_diag].dropna()
+        g_vals = df_filtered[df_filtered['Good_Qty'] > 0][feat_diag].dropna()
+        b_vals = df_filtered[df_filtered['Bad_Qty'] > 0][feat_diag].dropna()
         
-        if not g_vals.empty:
-            sns.kdeplot(g_vals, ax=ax, label="GOOD (A-B+, A-B)", fill=True, color="green", alpha=0.3)
-        if not b_vals.empty:
-            sns.kdeplot(b_vals, ax=ax, label="BAD (A-B-, B+, B)", fill=True, color="red", alpha=0.3)
-            
+        if not g_vals.empty: sns.kdeplot(g_vals, ax=ax, label="GOOD", fill=True, color="green", alpha=0.3)
+        if not b_vals.empty: sns.kdeplot(b_vals, ax=ax, label="BAD", fill=True, color="red", alpha=0.3)
         ax.set_title(f"Distribution Shift: {feat_diag} (Good vs Bad)")
-        ax.legend()
-        st.pyplot(fig); plt.close(fig)
-        
-        # --- AUTO-INSIGHT 3: OVERLAY ---
-        if not g_vals.empty and not b_vals.empty:
-            g_mean = g_vals.mean()
-            b_mean = b_vals.mean()
-            diff = b_mean - g_mean
-            
-            # Kiểm tra xem độ lệch có đáng kể không (ví dụ: lớn hơn 20% độ lệch chuẩn của hàng tốt)
-            if abs(diff) > (g_vals.std() * 0.2):
-                direction = "HIGHER" if diff > 0 else "LOWER"
-                st.error(f"📉 **Diagnostic Insight:** BAD coils have a noticeably **{direction} average {feat_diag}** ({b_mean:.1f}) compared to GOOD coils ({g_mean:.1f}). This property shift is highly likely contributing to the defects.")
-            else:
-                st.info(f"ℹ️ **Diagnostic Insight:** The average {feat_diag} is very similar between GOOD and BAD coils ({g_mean:.1f} vs {b_mean:.1f}). This parameter might NOT be the root cause. Try checking another property.")
+        ax.legend(); st.pyplot(fig); plt.close(fig)
 
+        # --- STEP 4: I-MR CHART WITH SPECS ---
+        st.markdown("---")
+        st.subheader(f"Step 4: Time-Series Stability Tracking (I-MR Chart for {feat_diag})")
+        st.info("Filter down to a specific specification to view its timeline against Standard Specs.")
+        
+        c1, c2, c3 = st.columns(3)
+        sel_period = c1.selectbox("Filter by Period:", selected_periods)
+        sel_thick = c2.selectbox("Filter by Thickness:", thickness_list)
+        sel_mat = c3.selectbox("Filter by Material:", material_list)
+
+        imr_data = df_filtered[(df_filtered['Time_Group'] == sel_period) & 
+                               (df_filtered['Actual_Thickness'] == sel_thick) & 
+                               (df_filtered['HR_Material'] == sel_mat)]
+
+        if not imr_data.empty and len(imr_data[feat_diag].dropna()) > 1:
+            vals = imr_data[feat_diag].dropna().values
+            mean_val = np.mean(vals)
+            
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 7), gridspec_kw={'height_ratios': [2, 1]})
+            
+            # I-CHART
+            ax1.plot(vals, marker='o', ms=4, lw=1.5, color='#1f77b4', label='Individual Value')
+            ax1.axhline(mean_val, color='green', ls='--', label='Process Mean')
+            
+            # ADD GLOBAL SPECS
+            if feat_diag in GLOBAL_SPECS:
+                s = GLOBAL_SPECS[feat_diag]
+                if s.get('min'): ax1.axhline(s['min'], color='red', ls='-', lw=2, label=f"Lower Spec ({s['min']})")
+                if s.get('max'): ax1.axhline(s['max'], color='red', ls='-', lw=2, label=f"Upper Spec ({s['max']})")
+                if s.get('target'): ax1.axhline(s['target'], color='black', ls=':', lw=1.5, label=f"Target ({s['target']})")
+                if s.get('min') and s.get('max'):
+                    ax1.axhspan(s['min'], s['max'], color='green', alpha=0.05)
+
+            ax1.set_title(f"I-Chart: {feat_diag} | {sel_period} | {sel_thick}mm ({sel_mat})", fontweight='bold')
+            ax1.legend(loc='upper right', fontsize=8)
+
+            # MR-CHART
+            mr = np.abs(np.diff(vals))
+            mr_mean = np.mean(mr)
+            ax2.plot(mr, marker='o', ms=4, lw=1.5, color='orange')
+            ax2.axhline(mr_mean, color='green', ls='--', label='MR Mean')
+            ax2.axhline(3.267 * mr_mean, color='red', ls=':', label='UCL (MR)')
+            ax2.set_title("Moving Range (MR-Chart)", fontweight='bold')
+            ax2.legend(loc='upper right', fontsize=8)
+
+            fig.tight_layout()
+            st.pyplot(fig); plt.close(fig)
+        else:
+            st.warning("Not enough data to generate I-MR chart for this specific combination.")
     # --- EXPORT SECTION ---
     # (Giữ nguyên logic Export ban đầu của bạn...)
     st.sidebar.header("📥 Export Options")
