@@ -193,6 +193,14 @@ if uploaded_file is not None:
         st.header("🔍 4-Step Root Cause Diagnostic Flow")
         st.info("Automated diagnostic tools to identify 'hotspots' and explain quality shifts.")
         
+        # --- ĐƯA GLOBAL SPECS VÀO TRỰC TIẾP TRONG TAB 3 ĐỂ TRÁNH LỖI ---
+        GLOBAL_SPECS = {
+            'YS': {'min': 400, 'max': 460, 'target': 430},
+            'TS': {'min': 410, 'max': 470, 'target': 440},
+            'EL': {'min': 25, 'max': None, 'target': None},
+            'YPE': {'min': 4, 'max': None, 'target': None}
+        }
+        
         # --- STEP 1: HEATMAP ---
         defect_str = ", ".join(bad_grades)
         st.subheader(f"Step 1: Locate the Hotspot (% Defect Rate: {defect_str})")
@@ -204,6 +212,7 @@ if uploaded_file is not None:
 
         if not heat_data.empty:
             fig, ax = plt.subplots(figsize=(12, 6))
+            import seaborn as sns
             sns.heatmap(heat_data, annot=True, fmt=".1f", cmap="YlOrRd", linewidths=.5, ax=ax)
             ax.set_title(f"HOTSPOT MAP: % DEFECT RATE ({defect_str})\n(Redder = Higher Defect Rate)", fontsize=12, fontweight='bold', color='#d62728', pad=15)
             ax.set_ylabel("Specification (Thickness & Material)")
@@ -240,7 +249,6 @@ if uploaded_file is not None:
         st.subheader("Step 3: Property Shift Analysis (GOOD vs BAD)")
         active_mechs = [f for f in ['YS', 'TS', 'EL', 'YPE'] if f in df_filtered.columns]
         
-        # Thêm key cho selectbox để tránh trùng ID
         feat_diag = st.selectbox("Select property to diagnose shift:", active_mechs, key="diag_feat_key")
         
         fig, ax = plt.subplots(figsize=(10, 4))
@@ -258,12 +266,10 @@ if uploaded_file is not None:
         st.subheader(f"Step 4: Time-Series Stability Tracking (I-MR Chart for {feat_diag})")
         st.info("Filter down to a specific specification to view its timeline against Standard Specs.")
         
-        # Khai báo biến danh sách để tránh NameError
         imr_thick_list = sorted(df_filtered['Actual_Thickness'].dropna().unique())
         imr_mat_list = sorted(df_filtered['HR_Material'].astype(str).unique())
         
         c1, c2, c3 = st.columns(3)
-        # Thêm các tham số key độc nhất để tránh lỗi StreamlitDuplicateElementId
         sel_period = c1.selectbox("Filter by Period:", selected_periods, key="imr_period_key")
         sel_thick = c2.selectbox("Filter by Thickness:", imr_thick_list, key="imr_thick_key")
         sel_mat = c3.selectbox("Filter by Material:", imr_mat_list, key="imr_mat_key")
