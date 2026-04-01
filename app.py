@@ -188,11 +188,12 @@ if uploaded_file is not None:
                         plot_dist(ax, df_t, f, f"{f} (Thick: {thick})", ly)
                         st.pyplot(fig); plt.close(fig)
 
-# --- TAB 3: DIAGNOSTIC FLOW (4 STEPS) ---
+# --- TAB 3: DIAGNOSTIC FLOW (OPTIMIZED TIMELINE) ---
     with tab3:
-        st.header("🔍 4-Step Root Cause Diagnostic Flow")
-        st.info("Automated diagnostic tools to identify 'hotspots' and explain quality shifts.")
+        st.header("🔍 Quality Diagnostic & Global Stability Flow")
+        st.info("Global analysis of production defects and continuous time-series stability.")
         
+        # Define Global Specs for Highlighting
         GLOBAL_SPECS = {
             'YS': {'min': 400, 'max': 460, 'target': 430},
             'TS': {'min': 410, 'max': 470, 'target': 440},
@@ -202,7 +203,7 @@ if uploaded_file is not None:
         
         # --- STEP 1: HEATMAP ---
         defect_str = ", ".join(bad_grades)
-        st.subheader(f"Step 1: Locate the Hotspot (% Defect Rate: {defect_str})")
+        st.subheader(f"Step 1: Defect Hotspot Map (% Rate: {defect_str})")
         
         df_filtered['Defect_Rate'] = (df_filtered['Bad_Qty'] / df_filtered['Total_Qty'] * 100).fillna(0)
         df_filtered['Spec_Label'] = df_filtered['Actual_Thickness'].astype(str) + "mm (" + df_filtered['HR_Material'] + ")"
@@ -213,16 +214,12 @@ if uploaded_file is not None:
             fig, ax = plt.subplots(figsize=(12, 6))
             import seaborn as sns
             sns.heatmap(heat_data, annot=True, fmt=".1f", cmap="YlOrRd", linewidths=.5, ax=ax)
-            ax.set_title(f"HOTSPOT MAP: % DEFECT RATE ({defect_str})\n(Redder = Higher Defect Rate)", fontsize=12, fontweight='bold', color='#d62728', pad=15)
-            ax.set_ylabel("Specification (Thickness & Material)")
-            ax.set_xlabel("Production Period")
+            ax.set_title(f"HOTSPOT MAP: % DEFECT RATE ({defect_str})", fontsize=12, fontweight='bold', color='#d62728', pad=15)
             st.pyplot(fig); plt.close(fig)
-        else:
-            st.warning("Not enough data to generate the diagnostic map.")
 
         # --- STEP 2: PARETO ---
         st.markdown("---")
-        st.subheader("Step 2: Identify Main Defect Category (Pareto)")
+        st.subheader("Step 2: Defect Category Breakdown (Pareto)")
         defect_sums = df_filtered[bad_grades].sum().sort_values(ascending=False)
         if defect_sums.sum() > 0:
             pareto_df = pd.DataFrame({'Count': defect_sums})
@@ -230,116 +227,99 @@ if uploaded_file is not None:
             
             fig, ax1 = plt.subplots(figsize=(10, 4))
             ax1.bar(pareto_df.index, pareto_df['Count'], color="#d62728", alpha=0.8)
-            ax1.set_ylabel("Defective Coils")
-            
             ax2 = ax1.twinx()
             ax2.plot(pareto_df.index, pareto_df['Cum_Pct'], color="#1f77b4", marker="D", ms=5)
             ax2.axhline(80, color="orange", linestyle="--")
-            ax2.set_ylim(0, 110)
-            ax2.set_ylabel("Cumulative Percentage (%)")
-            
-            plt.title("Pareto Principle: Focusing on 80% of Quality Issues")
+            plt.title("Pareto Principle: Focus on 80% of Quality Issues")
             st.pyplot(fig); plt.close(fig)
-        else:
-            st.success("No defects found in the selected data.")
 
-        # --- STEP 3: OVERLAY ---
+        # --- STEP 3: GLOBAL TIMELINE I-MR CHARTS ---
         st.markdown("---")
-        st.subheader("Step 3: Property Shift Analysis (GOOD vs BAD)")
-        active_mechs = [f for f in ['YS', 'TS', 'EL', 'YPE'] if f in df_filtered.columns]
-        
-        feat_diag = st.selectbox("Select property to diagnose shift:", active_mechs, key="diag_feat_key")
-        
-        fig, ax = plt.subplots(figsize=(10, 4))
-        g_vals = df_filtered[df_filtered['Good_Qty'] > 0][feat_diag].dropna()
-        b_vals = df_filtered[df_filtered['Bad_Qty'] > 0][feat_diag].dropna()
-        
-        if not g_vals.empty: sns.kdeplot(g_vals, ax=ax, label="GOOD (A-B+, A-B)", fill=True, color="green", alpha=0.3)
-        if not b_vals.empty: sns.kdeplot(b_vals, ax=ax, label="BAD (A-B-, B+, B)", fill=True, color="red", alpha=0.3)
-        
-        ax.set_title(f"Distribution Shift: {feat_diag} (Good vs Bad)")
-        ax.legend(); st.pyplot(fig); plt.close(fig)
+        st.subheader("Step 3: Continuous Time-Series Tracking (2024 - 2026)")
+        st.warning("X-Axis displays actual Production Dates. Red dots indicate Out-of-Spec violations in specific time periods.")
 
-        # --- STEP 4: I-MR CHART WITH OUT-OF-SPEC HIGHLIGHTS ---
-        st.markdown("---")
-        st.subheader(f"Step 4: Time-Series Stability Tracking (I-MR Chart for {feat_diag})")
-        st.info("Filter down to a specific specification to view its timeline. Red dots indicate Out of Spec / Out of Control points.")
-        
-        imr_thick_list = sorted(df_filtered['Actual_Thickness'].dropna().unique())
-        imr_mat_list = sorted(df_filtered['HR_Material'].astype(str).unique())
-        
-        c1, c2, c3 = st.columns(3)
-        sel_period = c1.selectbox("Filter by Period:", selected_periods, key="imr_period_key")
-        sel_thick = c2.selectbox("Filter by Thickness:", imr_thick_list, key="imr_thick_key")
-        sel_mat = c3.selectbox("Filter by Material:", imr_mat_list, key="imr_mat_key")
+        # Lọc bỏ dữ liệu trùng lặp "2025 (Full Year)" để dải thời gian vẽ lên biểu đồ không bị lặp lại
+        df_timeline = df_filtered[df_filtered['Time_Group'] != "2025 (Full Year)"].copy()
+        if df_timeline.empty:
+            df_timeline = df_filtered.copy()
 
-        imr_data = df_filtered[(df_filtered['Time_Group'] == sel_period) & 
-                               (df_filtered['Actual_Thickness'] == sel_thick) & 
-                               (df_filtered['HR_Material'] == sel_mat)]
-
-        if not imr_data.empty and len(imr_data[feat_diag].dropna()) > 1:
-            vals = imr_data[feat_diag].dropna().values
-            mean_val = np.mean(vals)
-            
-            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 7), gridspec_kw={'height_ratios': [2, 1]})
-            
-            # --- VẼ I-CHART ---
-            ax1.plot(vals, marker='o', ms=4, lw=1.5, color='#1f77b4', label='Individual Value', zorder=1)
-            ax1.axhline(mean_val, color='green', ls='--', label='Process Mean')
-            
-            out_of_spec_x = []
-            out_of_spec_y = []
-            
-            if feat_diag in GLOBAL_SPECS:
-                s = GLOBAL_SPECS[feat_diag]
-                min_s = s.get('min')
-                max_s = s.get('max')
+        for feat in ['YS', 'TS', 'EL', 'YPE']:
+            if feat in df_timeline.columns:
+                # Sắp xếp dữ liệu theo ngày tháng sản xuất để vẽ Time-series chuẩn xác
+                df_ts = df_timeline.dropna(subset=[feat, '烤三生產日期']).sort_values(by='烤三生產日期').reset_index(drop=True)
                 
-                # Tìm các điểm bị lỗi vượt Spec
-                for i, v in enumerate(vals):
-                    if (min_s is not None and v < min_s) or (max_s is not None and v > max_s):
-                        out_of_spec_x.append(i)
-                        out_of_spec_y.append(v)
-
-                if min_s: ax1.axhline(min_s, color='red', ls='-', lw=2, label=f"Lower Spec ({min_s})")
-                if max_s: ax1.axhline(max_s, color='red', ls='-', lw=2, label=f"Upper Spec ({max_s})")
-                if s.get('target'): ax1.axhline(s['target'], color='black', ls=':', lw=1.5, label=f"Target ({s['target']})")
-                if min_s and max_s: ax1.axhspan(min_s, max_s, color='green', alpha=0.05)
-            
-            # Tô đỏ các điểm vi phạm trên I-Chart
-            if out_of_spec_x:
-                ax1.scatter(out_of_spec_x, out_of_spec_y, color='red', s=60, zorder=5, label='Out of Spec (Violation)')
-
-            ax1.set_title(f"I-Chart: {feat_diag} | {sel_period} | {sel_thick}mm ({sel_mat})", fontweight='bold')
-            ax1.legend(loc='upper right', fontsize=8)
-
-            # --- VẼ MR-CHART ---
-            mr = np.abs(np.diff(vals))
-            mr_mean = np.mean(mr)
-            ucl_mr = 3.267 * mr_mean
-            
-            ax2.plot(mr, marker='o', ms=4, lw=1.5, color='orange', label='Moving Range', zorder=1)
-            ax2.axhline(mr_mean, color='green', ls='--', label='MR Mean')
-            ax2.axhline(ucl_mr, color='red', ls=':', label=f'UCL ({ucl_mr:.1f})')
-            
-            # Tìm và tô đỏ các điểm vượt UCL trên MR-Chart
-            out_of_ctrl_x = []
-            out_of_ctrl_y = []
-            for i, m_val in enumerate(mr):
-                if m_val > ucl_mr:
-                    out_of_ctrl_x.append(i)
-                    out_of_ctrl_y.append(m_val)
+                if len(df_ts) > 1:
+                    st.markdown(f"#### 📈 Production Timeline: **{feat}**")
+                    dates = df_ts['烤三生產日期']
+                    vals = df_ts[feat].values
+                    mean_val = np.mean(vals)
                     
-            if out_of_ctrl_x:
-                ax2.scatter(out_of_ctrl_x, out_of_ctrl_y, color='red', s=60, zorder=5, label='Out of Control (Variation)')
+                    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 8), gridspec_kw={'height_ratios': [2, 1]})
+                    
+                    # --- I-CHART (VẼ THEO NGÀY THÁNG) ---
+                    ax1.plot(dates, vals, marker='o', ms=3, lw=1, color='#1f77b4', alpha=0.6, label=f'Individual {feat}', zorder=1)
+                    ax1.axhline(mean_val, color='green', ls='--', label='Process Mean')
+                    
+                    # Bắt lỗi vượt Spec
+                    out_dates, out_y = [], []
+                    if feat in GLOBAL_SPECS:
+                        s = GLOBAL_SPECS[feat]
+                        min_s, max_s = s.get('min'), s.get('max')
+                        
+                        for i, v in enumerate(vals):
+                            if (min_s is not None and v < min_s) or (max_s is not None and v > max_s):
+                                out_dates.append(dates.iloc[i])
+                                out_y.append(v)
 
-            ax2.set_title("Moving Range (MR-Chart)", fontweight='bold')
-            ax2.legend(loc='upper right', fontsize=8)
+                        if min_s: ax1.axhline(min_s, color='red', ls='-', lw=2, label=f"Lower Spec ({min_s})")
+                        if max_s: ax1.axhline(max_s, color='red', ls='-', lw=2, label=f"Upper Spec ({max_s})")
+                        if s.get('target'): ax1.axhline(s['target'], color='black', ls=':', label=f"Target ({s['target']})")
+                        if min_s and max_s: ax1.axhspan(min_s, max_s, color='green', alpha=0.05)
+                    
+                    # Tô đỏ chấm vi phạm theo đúng ngày
+                    if out_dates:
+                        ax1.scatter(out_dates, out_y, color='red', s=50, zorder=5, label='Violation')
 
-            fig.tight_layout()
-            st.pyplot(fig); plt.close(fig)
-        else:
-            st.warning("Not enough continuous data points to generate an I-MR chart for this specific filter combination.")
+                    # VẼ VẠCH PHÂN CÁCH CÁC NĂM
+                    for year in dates.dt.year.unique():
+                        year_start = pd.Timestamp(year=year, month=1, day=1)
+                        if year_start >= dates.min():
+                            ax1.axvline(year_start, color='black', linestyle='-.', alpha=0.5)
+                            ax2.axvline(year_start, color='black', linestyle='-.', alpha=0.5)
+                            ax1.text(year_start + pd.Timedelta(days=10), ax1.get_ylim()[1]*0.98, f"Start of {year}", color='black', fontweight='bold', alpha=0.7, va='top', rotation=90)
+
+                    ax1.set_title(f"I-Chart: {feat} (Chronological Timeline)", fontweight='bold')
+                    ax1.legend(loc='upper right', fontsize=8)
+                    ax1.grid(True, linestyle='--', alpha=0.3)
+
+                    # --- MR-CHART (VẼ THEO NGÀY THÁNG) ---
+                    mr = np.abs(np.diff(vals))
+                    mr_mean = np.mean(mr)
+                    ucl_mr = 3.267 * mr_mean
+                    mr_dates = dates.iloc[1:] # MR chart bị lùi 1 nhịp so với I-Chart
+                    
+                    ax2.plot(mr_dates, mr, marker='o', ms=3, lw=1, color='orange', alpha=0.6, zorder=1)
+                    ax2.axhline(mr_mean, color='green', ls='--', label='MR Mean')
+                    ax2.axhline(ucl_mr, color='red', ls=':', label=f'UCL ({ucl_mr:.1f})')
+                    
+                    # Tô đỏ điểm MR vượt ngưỡng
+                    v_out_dates, v_out_y = [], []
+                    for i, m_val in enumerate(mr):
+                        if m_val > ucl_mr:
+                            v_out_dates.append(mr_dates.iloc[i])
+                            v_out_y.append(m_val)
+                    if v_out_dates:
+                        ax2.scatter(v_out_dates, v_out_y, color='red', s=40, zorder=5)
+
+                    ax2.set_title("Moving Range (Process Variation)", fontweight='bold')
+                    ax2.legend(loc='upper right', fontsize=8)
+                    ax2.grid(True, linestyle='--', alpha=0.3)
+
+                    # Tự động xoay nghiêng định dạng ngày tháng ở trục X cho dễ đọc
+                    fig.autofmt_xdate()
+                    fig.tight_layout()
+                    st.pyplot(fig); plt.close(fig)
+                    st.markdown("---")
     # --- EXPORT SECTION ---
     # (Giữ nguyên logic Export ban đầu của bạn...)
     st.sidebar.header("📥 Export Options")
