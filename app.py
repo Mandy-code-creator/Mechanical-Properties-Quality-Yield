@@ -22,9 +22,7 @@ if uploaded_file is not None:
     df = pd.read_excel(uploaded_file)
     df.columns = df.columns.str.strip() 
 
-    # --- DYNAMICALLY LOCATE THE CORRECT THICKNESS COLUMN ---
-    # The Excel file contains multiple columns named '厚度'. 
-    # We locate the exact one placed immediately before '型式' as highlighted by the user.
+    # --- DYNAMICALLY LOCATE AND RENAME THICKNESS COLUMN ---
     target_thickness_col = None
     for i, col in enumerate(df.columns):
         base_col = col.split('.')[0] if '.' in col else col
@@ -36,11 +34,9 @@ if uploaded_file is not None:
                     break
     
     if target_thickness_col:
-        df.rename(columns={target_thickness_col: 'Actual_Thickness'}, inplace=True)
-    else:
-        # Fallback 
-        if '厚度' in df.columns:
-            df.rename(columns={'厚度': 'Actual_Thickness'}, inplace=True)
+        df.rename(columns={target_thickness_col: 'Thickness'}, inplace=True)
+    elif '厚度' in df.columns:
+        df.rename(columns={'厚度': 'Thickness'}, inplace=True)
 
     # --- COLUMN TRANSLATION ---
     rename_map = {
@@ -53,14 +49,12 @@ if uploaded_file is not None:
     if '年度' in df.columns:
         df['年度'] = df['年度'].astype(str).str.replace(r'\.0$', '', regex=True)
         
-    # FIX DATE PARSING (YYYYMMDD)
     if '烤三生產日期' in df.columns:
         date_str = df['烤三生產日期'].astype(str).str.replace(r'\.0$', '', regex=True)
         df['烤三生產日期'] = pd.to_datetime(date_str, format='%Y%m%d', errors='coerce').fillna(pd.to_datetime(date_str, errors='coerce'))
 
-    # CAST THICKNESS AND AVOID FLOATING POINT ERRORS
-    if 'Actual_Thickness' in df.columns:
-        df['Actual_Thickness'] = pd.to_numeric(df['Actual_Thickness'], errors='coerce').round(3)
+    if 'Thickness' in df.columns:
+        df['Thickness'] = pd.to_numeric(df['Thickness'], errors='coerce').round(3)
         
     if '熱軋材質' in df.columns:
         df['熱軋材質'] = df['熱軋材質'].astype(str).str.strip()
@@ -68,7 +62,6 @@ if uploaded_file is not None:
     # --- PERIOD CATEGORIZATION LOGIC ---
     def categorize_period(date_val):
         if pd.isnull(date_val): return "Unknown"
-        
         y = date_val.year
         q3_start = pd.Timestamp(2025, 6, 29)
         q3_end = pd.Timestamp(2025, 9, 30)
@@ -88,13 +81,20 @@ if uploaded_file is not None:
 
     if '烤三生產日期' in df.columns:
         df['Time_Group'] = df['烤三生產日期'].apply(categorize_period)
-        # Remove invalid periods to keep dashboard clean
         df = df[~df['Time_Group'].isin(["Other", "Unknown"])]
+        
+        # --- GENERATE 2025 FULL YEAR DATA ---
+        df_2025 = df[df['烤三生產日期'].dt.year == 2025].copy()
+        if not df_2025.empty:
+            df_2025['Time_Group'] = "2025 (Full Year)"
+            df = pd.concat([df, df_2025], ignore_index=True)
     else:
         df['Time_Group'] = "Unknown"
 
     # --- SIDEBAR FILTERS ---
     st.sidebar.header("🔎 Dashboard Filters")
+    
+    # Custom sort to ensure "Full Year" appears logically
     all_periods = sorted(df['Time_Group'].unique())
     options_list = ["All"] + all_periods
     
@@ -106,9 +106,8 @@ if uploaded_file is not None:
         selected_periods = ui_selection
         df = df[df['Time_Group'].isin(selected_periods)]
 
-    # Get dynamic thickness list
-    if 'Actual_Thickness' in df.columns:
-        thickness_list = sorted(df['Actual_Thickness'].dropna().unique(), key=lambda x: float(x))
+    if 'Thickness' in df.columns:
+        thickness_list = sorted(df['Thickness'].dropna().unique(), key=lambda x: float(x))
     else:
         thickness_list = []
 
@@ -119,7 +118,7 @@ if uploaded_file is not None:
     mech_features = [feat for feat in ['YS', 'TS', 'EL', 'YPE', 'HARDNESS'] if feat in df.columns]
     for feat in mech_features: df[feat] = pd.to_numeric(df[feat], errors='coerce')
 
-    # --- GLOBAL X-AXIS FIXATION ---
+    # --- GLOBAL X-AXIS BOUNDS ---
     global_x_bounds = {}
     for feat in mech_features:
         vd = df[[feat] + count_cols].dropna(subset=[feat]).copy()
@@ -151,8 +150,8 @@ if uploaded_file is not None:
 
     # --- TAB 1: YIELD SUMMARY ---
     with tab1:
-        st.header("1. Quality Yield Summary (Thickness ➔ Material)")
-        group_cols = ['Time_Group', 'Actual_Thickness', '熱軋材質']
+        st.header("1. Quality Yield Summary")
+        group_cols = ['Time_Group', 'Thickness', '熱軋材質']
         existing_group_cols = [col for col in group_cols if col in df.columns]
         
         if existing_group_cols:
@@ -160,9 +159,10 @@ if uploaded_file is not None:
             summary_df['Total_Qty'] = summary_df[count_cols].sum(axis=1)
             summary_df = summary_df[summary_df['Total_Qty'] > 0]
             
-            for col in count_cols: summary_df[f"% {col.replace('_Qty','')}"] = (summary_df[col]/summary_df['Total_Qty']*100).fillna(0).round(1)
+            for col in count_cols: 
+                summary_df[f"% {col.replace('_Qty','')}"] = (summary_df[col]/summary_df['Total_Qty']*100).fillna(0).round(1)
             
-            display_df = summary_df.rename(columns={'Time_Group': 'Period', 'Actual_Thickness': 'Thickness', '熱軋材質': 'HR Material'})
+            display_df = summary_df.rename(columns={'Time_Group': 'Period', '熱軋材質': 'HR Material'})
             for col in count_cols: display_df.rename(columns={col: col.replace('_Qty','')}, inplace=True)
             
             base_cols = [c for c in ['Period', 'Thickness', 'HR Material', 'Total_Qty'] if c in display_df.columns]
@@ -187,7 +187,7 @@ if uploaded_file is not None:
             towrite_summary.seek(0)
             st.download_button("📥 Download Pivot Summary (Excel)", data=towrite_summary, file_name="Quality_Yield_Summary.xlsx")
 
-    # --- SHARED STATS FUNCTIONS ---
+    # --- STATS & PLOT FUNCTIONS ---
     def calculate_stats(v_arr, w_arr, k_factor):
         m_std = np.average(v_arr, weights=w_arr)
         s_std = np.sqrt(np.average((v_arr - m_std)**2, weights=w_arr))
@@ -269,6 +269,7 @@ if uploaded_file is not None:
         if df_p.empty: continue
         safe_p = "".join([c if c.isalnum() else "_" for c in period])
 
+        # TAB 2 VISUALS
         with tab2:
             st.markdown(f"## 📅 Time Period: **{period}**")
             st.subheader(f"🌐 Overall Factory Distribution ({period})")
@@ -284,9 +285,9 @@ if uploaded_file is not None:
             
             st.subheader(f"🔍 Distribution by Thickness ({period})")
             for thick in thickness_list:
-                df_thick = df_p[df_p['Actual_Thickness'] == thick]
+                df_thick = df_p[df_p['Thickness'] == thick]
                 if df_thick.empty: continue
-                st.markdown(f"**📏 Thick: {thick}**")
+                st.markdown(f"**📏 Thickness: {thick}**")
                 local_y = get_shared_y(df_thick, ['YS', 'TS', 'EL', 'YPE']) 
                 cols_dist = st.columns(2)
                 for i, f in enumerate(['YS', 'TS', 'EL', 'YPE']):
@@ -298,6 +299,7 @@ if uploaded_file is not None:
                             fig.savefig(f"dist_{f}_{thick}_{safe_p}.png", bbox_inches='tight')
             st.markdown("---")
 
+        # TAB 3 VISUALS
         with tab3:
             st.markdown(f"## 📅 Time Period: **{period}**")
             st.subheader(f"🌐 Overall Factory Goals ({period})")
@@ -339,10 +341,10 @@ if uploaded_file is not None:
 
             st.subheader(f"🔍 Local Control Limits & I-MR ({period})")
             for thick in thickness_list:
-                df_t = df_p[df_p['Actual_Thickness'] == thick]
+                df_t = df_p[df_p['Thickness'] == thick]
                 if df_t.empty: continue
                 
-                st.markdown(f"**📏 Thick: {thick}**")
+                st.markdown(f"**📏 Thickness: {thick}**")
                 period_thick_data = []
                 plot_data_dict = {}
                 
@@ -410,7 +412,6 @@ if uploaded_file is not None:
                             ax1.text(1.02, mv, f"Mean: {mv:.1f}", color='green', transform=trans1, va='center', fontweight='bold')
                             ax1.text(1.02, ucl, f"UCL: {ucl:.1f}", color='red', transform=trans1, va='center', fontweight='bold')
                             ax1.text(1.02, lcl, f"LCL: {lcl:.1f}", color='red', transform=trans1, va='center', fontweight='bold')
-                            
                             ax1.set_title(f"I-Chart: {f} ({chart_method})", fontsize=11, fontweight='bold')
                             
                             mr = np.abs(np.diff(v))
@@ -422,7 +423,6 @@ if uploaded_file is not None:
                             if len(mr_outs) > 0: ax2.scatter(mr_outs, mr[mr_outs], color='red', s=60, zorder=2)
                             ax2.axhline(mrm, color='green', ls='--', lw=1.5)
                             ax2.axhline(mru, color='red', ls='--', lw=1.2)
-                            
                             trans2 = ax2.get_yaxis_transform()
                             ax2.text(1.02, mrm, f"Mean: {mrm:.1f}", color='green', transform=trans2, va='center', fontweight='bold')
                             ax2.text(1.02, mru, f"UCL: {mru:.1f}", color='red', transform=trans2, va='center', fontweight='bold')
@@ -434,7 +434,7 @@ if uploaded_file is not None:
             st.markdown("---")
 
     # --- EXPORT SECTION ---
-    st.sidebar.header("📥 Full Export Options")
+    st.sidebar.header("📥 Export Options")
     if st.sidebar.button("Download Detailed Excel"):
         towrite = io.BytesIO()
         pd.DataFrame(all_export_data).to_excel(towrite, index=False, engine='openpyxl')
@@ -443,15 +443,13 @@ if uploaded_file is not None:
 
     # --- PDF EXPORT ---
     st.sidebar.markdown("---")
-    st.sidebar.subheader("🖨️ Generate PDF Reports")
+    st.sidebar.subheader("🖨️ PDF Reports")
     def clean(t): return str(t).replace('±', '+/-').replace('–', '-').encode('latin-1', 'ignore').decode('latin-1')
 
-    if st.sidebar.button("Generate FULL PDF (Detailed)"):
+    if st.sidebar.button("Generate PDF Report"):
         pdf = FPDF(orientation='L')
-        
-        # 1. PIVOT SUMMARY
         if 'display_df' in locals() and not display_df.empty:
-            pdf.add_page(); pdf.set_font('Arial', 'B', 16); pdf.cell(0, 10, "1. QUALITY YIELD SUMMARY", ln=True, align="C"); pdf.ln(5)
+            pdf.add_page(); pdf.set_font('Arial', 'B', 16); pdf.cell(0, 10, "1. YIELD SUMMARY", ln=True, align="C"); pdf.ln(5)
             pdf.set_font('Arial', 'B', 8)
             cw_tab1 = [25, 15, 25, 15] + [12]*len(grade_cols) + [12]*len(pct_cols)
             for i, col in enumerate(display_df.columns): pdf.cell(cw_tab1[i] if i < len(cw_tab1) else 20, 8, clean(col), border=1, align='C')
@@ -459,9 +457,7 @@ if uploaded_file is not None:
             for _, r in display_df.head(25).iterrows(): 
                 for i, v in enumerate(r): pdf.cell(cw_tab1[i] if i < len(cw_tab1) else 20, 8, clean(v), border=1, align='C')
                 pdf.ln()
-            if len(display_df) > 25: pdf.cell(0, 10, "...(See Excel for full pivot data)", ln=True)
 
-        # 2. CHRONOLOGICAL PERIODS
         heads = ["Feature", "Method", "Limit", "Segment Dist", "TARGET", "TOL", f"MILL {sigma_mill}σ", f"RELEASE {sigma_release}σ"]
         c_w3 = [16, 22, 24, 60, 15, 12, 28, 30] 
 
@@ -469,12 +465,12 @@ if uploaded_file is not None:
             safe_p = "".join([c if c.isalnum() else "_" for c in period])
             pdf.add_page(); pdf.set_font('Arial', 'B', 16); pdf.cell(0, 10, f"--- PERIOD: {period} ---", ln=True, align="C"); pdf.ln(5)
             
-            pdf.set_font('Arial', 'B', 12); pdf.cell(0, 10, "Overall Factory Distribution", ln=True); ys = pdf.get_y()
+            pdf.set_font('Arial', 'B', 12); pdf.cell(0, 10, "Overall Distribution", ln=True); ys = pdf.get_y()
             for idx, f in enumerate(['YS', 'TS', 'EL', 'YPE']):
                 path = f"overall_{f}_{safe_p}.png"
                 if os.path.exists(path): pdf.image(path, x=(10 if idx%2==0 else 150), y=(ys if idx<2 else ys+75), w=135)
             
-            pdf.add_page(); pdf.set_font('Arial', 'B', 12); pdf.cell(0, 10, "Overall Factory Goals", ln=True)
+            pdf.add_page(); pdf.set_font('Arial', 'B', 12); pdf.cell(0, 10, "Overall Goals", ln=True)
             pdf.set_font('Arial', 'B', 8)
             for i, h in enumerate(heads): pdf.cell(c_w3[i], 7, clean(h), border=1, align='C')
             pdf.ln(); pdf.set_font('Arial', '', 7)
@@ -515,6 +511,6 @@ if uploaded_file is not None:
                     path = f"imr_{f}_{thick}_{safe_p}.png"
                     if os.path.exists(path): pdf.image(path, x=(10 if idx%2==0 else 150), y=(y_imr if idx<2 else y_imr+90), w=130)
 
-        pdf.output("QC_Full_Report_by_Period.pdf")
-        with open("QC_Full_Report_by_Period.pdf", "rb") as f:
-            st.sidebar.download_button("📥 Download FULL PDF", f.read(), "QC_Full_Report_by_Period.pdf", "application/pdf")
+        pdf.output("QC_Report.pdf")
+        with open("QC_Report.pdf", "rb") as f:
+            st.sidebar.download_button("📥 Download PDF", f.read(), "QC_Report.pdf", "application/pdf")
