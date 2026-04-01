@@ -82,7 +82,7 @@ if uploaded_file is not None:
         df['Time_Group'] = "Unknown"
 
     # --- ĐÃ SỬA: THÊM TAB 3 VÀO DANH SÁCH KHAI BÁO ---
-    tab0, tab1, tab2, tab3 = st.tabs(["0. Raw Check", "1. Yield Summary", "2. Distribution Analysis", "3. Root Cause"])
+    tab0, tab1, tab2, tab3 = st.tabs(["0. Raw Check", "1. Yield Summary", "2. Distribution Analysis", "3.🔍 Root Cause & Diagnostic Analysis"])
 
     with tab0:
         st.dataframe(df.head(10), use_container_width=True)
@@ -188,47 +188,80 @@ if uploaded_file is not None:
                         plot_dist(ax, df_t, f, f"{f} (Thick: {thick})", ly)
                         st.pyplot(fig); plt.close(fig)
 
-    # --- TAB 3: ROOT CAUSE ANALYSIS (NEW TASK) ---
+    # --- PHẦN 2: CODE VIẾT TIẾP CHO TAB 3 (Dán vào cuối file app.py) ---
     with tab3:
-        st.header("🔍 Root Cause Analysis")
+        st.header("🔍 Root Cause & Diagnostic Analysis")
+        st.info("Phân tích chuyên sâu để tìm ra 'thủ phạm' gây lỗi chất lượng.")
+
+        # Định nghĩa lại nhóm lỗi để tính toán cho Tab 3
+        good_g = ['A-B+', 'A-B']
+        bad_g = ['A-B-', 'B+', 'B']
         
-        # 3.1 PARETO CHART
-        st.subheader("1. Pareto Chart: Defect Categories")
-        defect_sums = df_filtered[bad_grades].sum().sort_values(ascending=False)
-        if defect_sums.sum() > 0:
-            defect_df = pd.DataFrame({'Count': defect_sums})
-            defect_df['Cumulative %'] = defect_df['Count'].cumsum() / defect_df['Count'].sum() * 100
-            fig, ax1 = plt.subplots(figsize=(10, 5))
-            ax1.bar(defect_df.index, defect_df['Count'], color="#d62728")
-            ax2 = ax1.twinx()
-            ax2.plot(defect_df.index, defect_df['Cumulative %'], color="#1f77b4", marker="D", ms=5)
-            ax2.axhline(80, color="orange", linestyle="--")
-            ax1.set_ylabel("Count (Coils)")
-            ax2.set_ylabel("Cumulative Percentage (%)")
-            plt.title("Defect Distribution (Pareto)")
+        # 3.1 HEATMAP % B (Điểm nóng chất lượng)
+        st.subheader("1. Heatmap: Tỷ lệ lỗi (%) theo Độ dày & Giai đoạn")
+        # Tính % lỗi (Grade B)
+        df_filtered['Bad_Qty'] = df_filtered[bad_g].sum(axis=1)
+        df_filtered['Pct_B'] = (df_filtered['Bad_Qty'] / df_filtered['Total_Qty'] * 100).fillna(0)
+        
+        # Tạo bảng pivot cho Heatmap
+        # Kết hợp Thickness + Material để Sếp soi kỹ hơn
+        df_filtered['Spec_Label'] = df_filtered['Actual_Thickness'].astype(str) + " (" + df_filtered['HR_Material'] + ")"
+        heat_data = df_filtered.groupby(['Spec_Label', 'Time_Group'])['Pct_B'].mean().unstack()
+
+        if not heat_data.empty:
+            fig, ax = plt.subplots(figsize=(12, 7))
+            import seaborn as sns
+            sns.heatmap(heat_data, annot=True, fmt=".1f", cmap="YlOrRd", linewidths=.5, ax=ax)
+            ax.set_title("BẢN ĐỒ ĐIỂM NÓNG: Ô CÀNG ĐỎ = TỶ LỆ LỖI CÀNG CAO", fontsize=12, fontweight='bold', color='red')
             st.pyplot(fig); plt.close(fig)
         else:
-            st.write("No defects found in the selected period.")
+            st.warning("Không đủ dữ liệu để lập bản đồ nhiệt.")
 
-        # 3.2 OVERLAY GOOD VS BAD
-        st.subheader("2. Overlay Analysis: GOOD vs BAD Mechanical Properties")
+        # 3.2 PARETO CHART (Ưu tiên xử lý lỗi)
+        st.subheader("2. Pareto Chart: Các loại lỗi phổ biến nhất")
+        defect_sums = df_filtered[bad_g].sum().sort_values(ascending=False)
+        if defect_sums.sum() > 0:
+            pareto_df = pd.DataFrame({'Count': defect_sums})
+            pareto_df['Cum_Pct'] = pareto_df['Count'].cumsum() / pareto_df['Count'].sum() * 100
+            
+            fig, ax1 = plt.subplots(figsize=(10, 5))
+            ax1.bar(pareto_df.index, pareto_df['Count'], color="#d62728", alpha=0.8)
+            ax1.set_ylabel("Số lượng cuộn lỗi")
+            
+            ax2 = ax1.twinx()
+            ax2.plot(pareto_df.index, pareto_df['Cum_Pct'], color="#1f77b4", marker="D", ms=5, lw=2)
+            ax2.axhline(80, color="orange", linestyle="--", label="80% Cut-off")
+            ax2.set_ylim(0, 110)
+            ax2.set_ylabel("Tỷ lệ tích lũy (%)")
+            
+            plt.title("Biểu đồ Pareto: Tập trung xử lý 80% nguồn lỗi")
+            st.pyplot(fig); plt.close(fig)
+
+        # 3.3 OVERLAY GOOD VS BAD (Chẩn đoán nguyên nhân cơ tính)
+        st.subheader("3. Overlay Analysis: So sánh Cơ tính Hàng Đạt vs Hàng Lỗi")
         active_mechs = [f for f in ['YS', 'TS', 'EL', 'YPE'] if f in df_filtered.columns]
-        feat_to_check = st.selectbox("Select feature to analyze Root Cause:", active_mechs)
+        feat_diag = st.selectbox("Chọn chỉ số để chẩn đoán nguyên nhân:", active_mechs)
+        
         fig, ax = plt.subplots(figsize=(10, 5))
-        good_data = df_filtered[df_filtered['Good_Qty'] > 0][feat_to_check].dropna()
-        bad_data = df_filtered[df_filtered['Bad_Qty'] > 0][feat_to_check].dropna()
-        if not good_data.empty:
-            sns.kdeplot(good_data, ax=ax, label="GOOD (A-B+, A-B)", fill=True, color="green", alpha=0.3)
-        if not bad_data.empty:
-            sns.kdeplot(bad_data, ax=ax, label="BAD (A-B-, B+, B)", fill=True, color="red", alpha=0.3)
-        ax.set_title(f"Property Shift: {feat_to_check} (Good vs Bad)")
-        ax.legend(); st.pyplot(fig); plt.close(fig)
+        # Lấy dữ liệu hàng đạt và hàng lỗi
+        good_vals = df_filtered[df_filtered[good_g].sum(axis=1) > 0][feat_diag].dropna()
+        bad_vals = df_filtered[df_filtered[bad_g].sum(axis=1) > 0][feat_diag].dropna()
+        
+        if not good_vals.empty:
+            sns.kdeplot(good_vals, ax=ax, label="HÀNG ĐẠT (A-B+, A-B)", fill=True, color="green", alpha=0.3)
+        if not bad_vals.empty:
+            sns.kdeplot(bad_vals, ax=ax, label="HÀNG LỖI (A-B-, B+, B)", fill=True, color="red", alpha=0.3)
+        
+        ax.set_title(f"Sự dịch chuyển cơ tính {feat_diag}: GOOD vs BAD")
+        ax.legend()
+        st.pyplot(fig); plt.close(fig)
+        st.markdown("👉 **Mẹo đọc:** Nếu vùng **Đỏ** lệch hẳn sang phải/trái so với vùng **Xanh**, đó chính là nguyên nhân gây lỗi.")
 
-        # 3.3 BOXPLOT BY THICKNESS
-        st.subheader("3. Variability Analysis by Thickness")
-        fig, ax = plt.subplots(figsize=(12, 6))
-        sns.boxplot(data=df_filtered, x='Actual_Thickness', y=feat_to_check, palette="Set2", ax=ax)
-        ax.set_title(f"{feat_to_check} Variation across Thicknesses")
+        # 3.4 BOXPLOT THEO THICKNESS
+        st.subheader("4. Phân tích độ biến động theo Độ dày")
+        fig, ax = plt.subplots(figsize=(10, 5))
+        sns.boxplot(data=df_filtered, x='Actual_Thickness', y=feat_diag, palette="Set2", ax=ax)
+        ax.set_title(f"Độ ổn định chỉ số {feat_diag} theo từng độ dày")
         st.pyplot(fig); plt.close(fig)
 
     # --- EXPORT SECTION ---
