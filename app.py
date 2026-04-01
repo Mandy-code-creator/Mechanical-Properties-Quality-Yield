@@ -13,7 +13,7 @@ from matplotlib.patches import Patch
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="QC Mechanical Properties Optimizer", layout="wide")
 
-st.title("📊 Mechanical Properties & Quality Yield Optimizer (Standard QC View)")
+st.title("📊 Mechanical Properties & Quality Yield Optimizer (Executive View)")
 st.markdown("---")
 
 # --- 1. FILE UPLOAD ---
@@ -23,11 +23,60 @@ if uploaded_file is not None:
     df = pd.read_excel(uploaded_file)
     df.columns = df.columns.str.strip() 
 
+    # --- ⚙️ BỘ CHUYỂN ĐỔI FORMAT (DATA TRANSLATOR) ---
+    rename_map = {
+        '烤漆降伏強度': 'YS',
+        '烤漆抗拉強度': 'TS',
+        '伸長率': 'EL',
+        'A-B+': 'A-B+數', 
+        'A-B': 'A-B數',
+        'A-B-': 'A-B-數',
+        'B+': 'B+數',
+        'B': 'B數'
+    }
+    df.rename(columns=rename_map, inplace=True)
+
     # Khởi tạo biến toàn cục cho Export
     all_export_data = []
-    overall_export_data = [] # <--- THÊM BIẾN LƯU DỮ LIỆU OVERALL
+    overall_export_data = [] 
     
     # --- 2. DATA PREPROCESSING ---
+    
+    # 2.1. Khai báo & Ép kiểu dữ liệu Quản lý & Nguồn gốc
+    if '年度' in df.columns:
+        df['年度'] = df['年度'].astype(str).str.replace(r'\.0$', '', regex=True)
+        
+    if '烤三生產日期' in df.columns:
+        df['烤三生產日期'] = pd.to_datetime(df['烤三生產日期'], errors='coerce')
+        
+    if '厚度' in df.columns:
+        df['厚度'] = pd.to_numeric(df['厚度'], errors='coerce')
+        
+    if '熱軋材質' in df.columns:
+        df['熱軋材質'] = df['熱軋材質'].astype(str).str.strip()
+
+    # --- ⚙️ BỘ LỌC THỜI GIAN CHIẾN LƯỢC ---
+    def categorize_period(date_val):
+        if pd.isnull(date_val): return "6. Unknown/No Date"
+        y = date_val.year
+        m = date_val.month
+        if y == 2024: 
+            return "1. 2024 (Full Year)"
+        elif y == 2025:
+            if m <= 6: return "2. 2025 H1 (Q1+Q2)"
+            elif m <= 9: return "3. 2025 Q3"
+            else: return "4. 2025 Q4"
+        elif y == 2026 and m <= 3: 
+            return "5. 2026 Q1"
+        else: 
+            return "6. Other"
+
+    if '烤三生產日期' in df.columns:
+        df['Time_Group'] = df['烤三生產日期'].apply(categorize_period)
+    else:
+        df['Time_Group'] = "Unknown"
+
+    # 2.2. Xử lý cột Số lượng (Phân loại Grade)
     count_cols = ['A-B+數', 'A-B數', 'A-B-數', 'B+數', 'B數']
     count_cols = [col for col in count_cols if col in df.columns]
     
@@ -36,6 +85,7 @@ if uploaded_file is not None:
 
     df['Total_Count'] = df[count_cols].sum(axis=1)
 
+    # 2.3. Xử lý cột Cơ tính
     mech_features = ['YS', 'TS', 'EL', 'YPE', 'HARDNESS']
     mech_features = [feat for feat in mech_features if feat in df.columns]
     for feat in mech_features:
@@ -43,7 +93,7 @@ if uploaded_file is not None:
 
     thickness_list = sorted(df['厚度歸類'].dropna().unique(), key=lambda x: float(x))
 
-    # --- TÍNH TOÁN KHUNG TRỤC X CỐ ĐỊNH ---
+    # --- TÍNH TOÁN KHUNG TRỤC X CỐ ĐỊNH (GLOBAL X-AXIS) ---
     global_x_bounds = {}
     for feat in mech_features:
         vd = df[[feat] + count_cols].dropna(subset=[feat]).copy()
@@ -60,7 +110,6 @@ if uploaded_file is not None:
             buf = (fmax - fmin) * 0.05 if (fmax - fmin) > 0 else 5
             global_x_bounds[feat] = (fmin - buf, fmax + buf)
 
-    # --- HÀM TÍNH TOÁN THANG ĐO Y ---
     def get_shared_y(data, features):
         max_y = 0
         for feat in features:
@@ -77,29 +126,64 @@ if uploaded_file is not None:
 
     # --- 3. CREATE TABS ---
     tab1, tab2, tab3 = st.tabs([
-        "1. Summary & Yields", 
+        "1. Yield Summary (Multi-Level)", 
         "2. Distribution Analysis",
-        "3. Control Limits & Goals"
+        "3. Control Limits & I-MR Charts"
     ])
 
-    # --- TAB 1: SUMMARY ---
+    # --- TAB 1: EXECUTIVE YIELD SUMMARY (MULTI-LEVEL) ---
     with tab1:
-        st.header("1. Quality Summary by Thickness")
-        summary_df = df.groupby('厚度歸類')[count_cols].sum().reset_index()
-        summary_df['Total Data'] = summary_df[count_cols].sum(axis=1)
-        for col in count_cols:
-            summary_df[f"% {col.replace('數','')}"] = (summary_df[col] / summary_df['Total Data'] * 100).fillna(0).round(2)
-        display_df = summary_df.copy()
-        display_df.rename(columns={'厚度歸類': 'Thickness'}, inplace=True)
-        for col in count_cols:
-            display_df.rename(columns={col: col.replace('數','')}, inplace=True)
-        display_df.insert(0, 'No.', range(1, len(display_df) + 1))
+        st.header("1. Quality Yield Summary (Period ➔ Thickness ➔ Material)")
         
-        int_cols = [c.replace('數','') for c in count_cols] + ['Total Data', 'No.']
-        for c in int_cols:
-            if c in display_df.columns:
-                display_df[c] = display_df[c].astype(int)
-        st.dataframe(display_df, use_container_width=True, hide_index=True)
+        group_cols = ['Time_Group', '厚度歸類', '熱軋材質']
+        existing_group_cols = [col for col in group_cols if col in df.columns]
+        
+        if existing_group_cols:
+            summary_df = df.groupby(existing_group_cols)[count_cols].sum().reset_index()
+            summary_df['Total_Qty'] = summary_df[count_cols].sum(axis=1)
+            summary_df = summary_df[summary_df['Total_Qty'] > 0] 
+            
+            for col in count_cols:
+                summary_df[f"% {col.replace('數','')}"] = (summary_df[col] / summary_df['Total_Qty'] * 100).fillna(0).round(1)
+                
+            display_df = summary_df.copy()
+            rename_dict = {
+                'Time_Group': 'Period', 
+                '厚度歸類': 'Thickness',
+                '熱軋材質': 'HR Material'
+            }
+            display_df.rename(columns=rename_dict, inplace=True)
+            
+            for col in count_cols:
+                display_df.rename(columns={col: col.replace('數','')}, inplace=True)
+                
+            base_cols = [c for c in ['Period', 'Thickness', 'HR Material', 'Total_Qty'] if c in display_df.columns]
+            grade_cols = [c.replace('數','') for c in count_cols]
+            pct_cols = [f"% {c}" for c in grade_cols]
+            
+            for c in grade_cols + ['Total_Qty']:
+                if c in display_df.columns:
+                    display_df[c] = display_df[c].astype(int)
+                    
+            display_df = display_df[base_cols + grade_cols + pct_cols]
+            
+            if 'Period' in display_df.columns:
+                display_df = display_df.sort_values(by=['Period', 'Thickness'])
+
+            st.dataframe(display_df, use_container_width=True, hide_index=True)
+            
+            col1, col2 = st.columns([1, 4])
+            with col1:
+                towrite_summary = io.BytesIO()
+                display_df.to_excel(towrite_summary, index=False, engine='openpyxl')
+                towrite_summary.seek(0)
+                st.download_button(
+                    label="📥 Download Pivot Summary (Excel)", 
+                    data=towrite_summary, 
+                    file_name="Quality_Yield_Summary_by_Period.xlsx"
+                )
+        else:
+            st.warning("⚠️ Missing required columns for grouping (Time, Thickness, or HR Material).")
 
     # --- TAB 2: DISTRIBUTION ANALYSIS ---
     with tab2:
@@ -195,11 +279,10 @@ if uploaded_file is not None:
                         fig.savefig(f"dist_{feat}_{thick}.png", bbox_inches='tight')
             st.markdown("---")
 
-# --- TAB 3: OPTIMIZATION & I-MR CHARTS (MULTI-METHOD & DYNAMIC PARAMS) ---
+    # --- TAB 3: OPTIMIZATION & I-MR CHARTS (MULTI-METHOD & CLEAN UI) ---
     with tab3:
         st.header("3. Production Control Limits & Goals (A-B & Above Focused)")
         
-        # --- BẢNG ĐIỀU KHIỂN THÔNG SỐ (DYNAMIC CONTROLS) ---
         st.markdown("##### ⚙️ Parameter Configuration")
         col1, col2, col3, col4 = st.columns(4)
         with col1:
@@ -214,13 +297,10 @@ if uploaded_file is not None:
         spec_limits = {"YS": (405, 500), "TS": (415, 550), "EL": (25, None), "YPE": (4, None)}
         good_cols = [c for c in ['A-B+數', 'A-B數'] if c in df.columns]
 
-        # --- HÀM TÍNH TOÁN DÙNG CHUNG (STANDARD & IQR) ---
         def calculate_stats(v_arr, w_arr, k_factor):
-            # 1. Standard Method
             m_std = np.average(v_arr, weights=w_arr)
             s_std = np.sqrt(np.average((v_arr - m_std)**2, weights=w_arr))
             
-            # 2. IQR Filtered Method
             try:
                 expanded_v = np.repeat(v_arr, w_arr.astype(int))
                 q1 = np.percentile(expanded_v, 25)
@@ -273,11 +353,13 @@ if uploaded_file is not None:
                         mill_lower = max(0, int(round(m_val - sigma_mill * s_val)))
                         release_lower = max(0, int(round(m_val - sigma_release * s_val)))
                         
+                        is_first = (method_name == "Standard")
+                        
                         overall_export_data.append({
-                            "Feature": feat, 
+                            "Feature": feat if is_first else "", 
                             "Method": method_name,
-                            "Current Limit (2025/12)": spec_str_ov, 
-                            "Segment Distribution": seg_dist_overall,
+                            "Current Limit (2025/12)": spec_str_ov if is_first else "", 
+                            "Segment Distribution": seg_dist_overall if is_first else "",
                             "TARGET GOAL": int(round(m_val)),
                             "TOLERANCE": int(round(s_val)),
                             f"MILL RANGE {sigma_mill}σ": f"{mill_lower}-{int(round(m_val + sigma_mill*s_val))}",
@@ -311,7 +393,6 @@ if uploaded_file is not None:
                     v, w = temp_calc[feat].values, temp_calc['Good_Qty'].values
                     (m_std, s_std), (m_iqr, s_iqr) = calculate_stats(v, w, iqr_k)
                     
-                    # Lưu trữ cả 2 bộ thông số để dùng cho I-MR chart tùy theo chọn lựa của user
                     plot_data_dict[thick][feat] = {
                         'values': v, 
                         'mean_std': m_std, 'std_std': s_std,
@@ -330,11 +411,13 @@ if uploaded_file is not None:
                         mill_lower = max(0, int(round(m_val - sigma_mill * s_val)))
                         release_lower = max(0, int(round(m_val - sigma_release * s_val)))
                         
+                        is_first = (method_name == "Standard")
+                        
                         row = {
-                            "Feature": feat, 
+                            "Feature": feat if is_first else "", 
                             "Method": method_name,
-                            "Current Limit (2025/12)": spec_str,
-                            "Segment Distribution": seg_dist,
+                            "Current Limit (2025/12)": spec_str if is_first else "",
+                            "Segment Distribution": seg_dist if is_first else "",
                             "TARGET GOAL": int(round(m_val)),
                             "TOLERANCE": int(round(s_val)),
                             f"MILL RANGE {sigma_mill}σ": f"{mill_lower}-{int(round(m_val + sigma_mill*s_val))}",
@@ -342,13 +425,14 @@ if uploaded_file is not None:
                         }
                         thick_status.append(row)
                         
-                        exp_row = row.copy()
-                        exp_row['Thickness'] = thick
-                        all_export_data.append(exp_row)
+                        exp_row_excel = row.copy()
+                        exp_row_excel['Feature'] = feat
+                        exp_row_excel['Current Limit (2025/12)'] = spec_str
+                        exp_row_excel['Segment Distribution'] = seg_dist
+                        all_export_data.append(exp_row_excel)
 
             st.dataframe(pd.DataFrame(thick_status), use_container_width=True, hide_index=True)
             
-            # --- VẼ BIỂU ĐỒ I-MR TÙY BIẾN THEO METHOD CHỌN ---
             cols_imr = st.columns(2)
             top4 = [f for f in ['YS', 'TS', 'EL', 'YPE'] if f in plot_data_dict[thick]]
             for idx, f in enumerate(top4):
@@ -356,7 +440,6 @@ if uploaded_file is not None:
                     d = plot_data_dict[thick][f]
                     v = d['values']
                     
-                    # Lựa chọn thông số Mean/Std dựa trên Radio Button
                     if chart_method == "Standard Method":
                         mv, sv = d['mean_std'], d['std_std']
                     else:
@@ -365,10 +448,8 @@ if uploaded_file is not None:
                     if len(v) > 1:
                         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 7), gridspec_kw={'height_ratios': [2, 1]})
                         
-                        # I-MR dùng Sigma của Release Range làm giới hạn cảnh báo
                         ucl, lcl = mv + sigma_release*sv, max(0, mv - sigma_release*sv)
                         
-                        # I-Chart
                         ax1.plot(v, marker='o', color='#1f77b4', ms=4, lw=1, zorder=1)
                         outs = np.where((v > ucl) | (v < lcl))[0]
                         if len(outs) > 0:
@@ -393,7 +474,6 @@ if uploaded_file is not None:
                         ax1.set_title(f"I-Chart: {f} ({chart_method})", fontsize=11, fontweight='bold')
                         ax1.set_ylabel("Value")
                         
-                        # MR-Chart
                         mr = np.abs(np.diff(v))
                         mrm = np.mean(mr)
                         mru = 3.267 * mrm
@@ -425,11 +505,11 @@ if uploaded_file is not None:
 
     # --- EXPORT SECTION ---
     st.sidebar.header("📥 Export Options")
-    if st.sidebar.button("Download Excel Report"):
+    if st.sidebar.button("Download Detailed Excel"):
         towrite = io.BytesIO()
         pd.DataFrame(all_export_data).to_excel(towrite, index=False, engine='openpyxl')
         towrite.seek(0)
-        st.sidebar.download_button(label="Click to Download Excel", data=towrite, file_name="QC_Optimization_Report.xlsx")
+        st.sidebar.download_button(label="Click to Download Excel", data=towrite, file_name="QC_Detailed_Optimization.xlsx")
 
     # --- PDF EXPORT SECTION ---
     st.sidebar.markdown("---")
@@ -437,19 +517,23 @@ if uploaded_file is not None:
     
     def clean(t): return str(t).replace('±', '+/-').replace('–', '-').encode('latin-1', 'ignore').decode('latin-1')
 
-    # NÚT XUẤT BÁO CÁO TỔNG QUAN
     if st.sidebar.button("Generate OVERALL PDF (Executive)"):
         pdf_ov = FPDF(orientation='L')
         
         pdf_ov.add_page()
         pdf_ov.set_font('Arial', 'B', 16); pdf_ov.cell(0, 10, "QC MECHANICAL PROPERTIES - EXECUTIVE SUMMARY", ln=True, align="C"); pdf_ov.ln(5)
-        pdf_ov.set_font('Arial', 'B', 12); pdf_ov.cell(0, 10, "1. Quality Summary", ln=True)
-        pdf_ov.set_font('Arial', 'B', 8); cw = [10, 20] + [15]*len(count_cols) + [20] + [15]*len(count_cols)
-        for i, col in enumerate(display_df.columns): pdf_ov.cell(cw[i] if i < len(cw) else 20, 8, clean(col), border=1, align='C')
-        pdf_ov.ln(); pdf_ov.set_font('Arial', '', 8)
-        for _, r in display_df.iterrows():
-            for i, v in enumerate(r): pdf_ov.cell(cw[i] if i < len(cw) else 20, 8, clean(v), border=1, align='C')
-            pdf_ov.ln()
+        
+        # In bảng Tab 1 (Pivot Data) nếu có
+        if 'display_df' in locals() and not display_df.empty:
+            pdf_ov.set_font('Arial', 'B', 12); pdf_ov.cell(0, 10, "1. Quality Yield Summary", ln=True)
+            pdf_ov.set_font('Arial', 'B', 8)
+            cw_tab1 = [25, 15, 25, 15] + [12]*len(grade_cols) + [12]*len(pct_cols)
+            for i, col in enumerate(display_df.columns): pdf_ov.cell(cw_tab1[i] if i < len(cw_tab1) else 20, 8, clean(col), border=1, align='C')
+            pdf_ov.ln(); pdf_ov.set_font('Arial', '', 8)
+            for _, r in display_df.head(20).iterrows(): # Giới hạn 20 dòng để tránh tràn trang PDF
+                for i, v in enumerate(r): pdf_ov.cell(cw_tab1[i] if i < len(cw_tab1) else 20, 8, clean(v), border=1, align='C')
+                pdf_ov.ln()
+            if len(display_df) > 20: pdf_ov.cell(0, 10, "...(See Excel for full pivot data)", ln=True)
 
         pdf_ov.add_page(); pdf_ov.set_font('Arial', 'B', 12); pdf_ov.cell(0, 10, "2. Factory Overall Distribution", ln=True); ys = pdf_ov.get_y()
         for idx, f in enumerate(['YS', 'TS', 'EL', 'YPE']):
@@ -458,9 +542,7 @@ if uploaded_file is not None:
 
         pdf_ov.add_page(); pdf_ov.set_font('Arial', 'B', 12); pdf_ov.cell(0, 10, "3. Overall Factory Performance Goals", ln=True)
         
-        # Cập nhật PDF có thêm cột "Method" và Dynamic Sigma titles
         heads = ["Feature", "Method", "Limit (25/12)", "Segment Dist", "TARGET", "TOL", f"MILL {sigma_mill}σ", f"RELEASE {sigma_release}σ"]
-        # Phân bổ lại độ rộng cột sao cho tổng = ~270mm (A4 Landscape usable space)
         c_w3 = [16, 22, 24, 60, 15, 12, 28, 30] 
         
         pdf_ov.set_font('Arial', 'B', 8)
@@ -476,19 +558,22 @@ if uploaded_file is not None:
         with open("QC_Overall_Report.pdf", "rb") as f:
             st.sidebar.download_button("📥 Download OVERALL PDF", f.read(), "QC_Overall_Report.pdf", "application/pdf")
 
-    # NÚT XUẤT BÁO CÁO ĐẦY ĐỦ
     if st.sidebar.button("Generate FULL PDF (Detailed)"):
         pdf = FPDF(orientation='L')
         
         pdf.add_page()
         pdf.set_font('Arial', 'B', 16); pdf.cell(0, 10, "QC MECHANICAL PROPERTIES - FULL REPORT", ln=True, align="C"); pdf.ln(5)
-        pdf.set_font('Arial', 'B', 12); pdf.cell(0, 10, "1. Quality Summary", ln=True)
-        pdf.set_font('Arial', 'B', 8); cw = [10, 20] + [15]*len(count_cols) + [20] + [15]*len(count_cols)
-        for i, col in enumerate(display_df.columns): pdf.cell(cw[i] if i < len(cw) else 20, 8, clean(col), border=1, align='C')
-        pdf.ln(); pdf.set_font('Arial', '', 8)
-        for _, r in display_df.iterrows():
-            for i, v in enumerate(r): pdf.cell(cw[i] if i < len(cw) else 20, 8, clean(v), border=1, align='C')
-            pdf.ln()
+        
+        if 'display_df' in locals() and not display_df.empty:
+            pdf.set_font('Arial', 'B', 12); pdf.cell(0, 10, "1. Quality Yield Summary", ln=True)
+            pdf.set_font('Arial', 'B', 8)
+            cw_tab1 = [25, 15, 25, 15] + [12]*len(grade_cols) + [12]*len(pct_cols)
+            for i, col in enumerate(display_df.columns): pdf.cell(cw_tab1[i] if i < len(cw_tab1) else 20, 8, clean(col), border=1, align='C')
+            pdf.ln(); pdf.set_font('Arial', '', 8)
+            for _, r in display_df.head(20).iterrows(): 
+                for i, v in enumerate(r): pdf.cell(cw_tab1[i] if i < len(cw_tab1) else 20, 8, clean(v), border=1, align='C')
+                pdf.ln()
+            if len(display_df) > 20: pdf.cell(0, 10, "...(See Excel for full pivot data)", ln=True)
 
         pdf.add_page(); pdf.set_font('Arial', 'B', 12); pdf.cell(0, 10, "2. Factory Overall Distribution", ln=True); ys = pdf.get_y()
         for idx, f in enumerate(['YS', 'TS', 'EL', 'YPE']):
@@ -508,11 +593,11 @@ if uploaded_file is not None:
             pdf.set_font('Arial', 'B', 8)
             for i, h in enumerate(heads): pdf.cell(c_w3[i], 7, clean(h), border=1, align='C')
             pdf.ln(); pdf.set_font('Arial', '', 7)
-            for row in all_export_data:
-                if row['Thickness'] == thick:
-                    v_list = [row["Feature"], row["Method"], row["Current Limit (2025/12)"], row["Segment Distribution"], str(row["TARGET GOAL"]), str(row["TOLERANCE"]), row[f"MILL RANGE {sigma_mill}σ"], row[f"RELEASE RANGE {sigma_release}σ"]]
-                    for i, v in enumerate(v_list): pdf.cell(c_w3[i], 7, clean(v), border=1, align='C')
-                    pdf.ln()
+            
+            for row in thick_status:
+                v_list = [row["Feature"], row["Method"], row["Current Limit (2025/12)"], row["Segment Distribution"], str(row["TARGET GOAL"]), str(row["TOLERANCE"]), row[f"MILL RANGE {sigma_mill}σ"], row[f"RELEASE RANGE {sigma_release}σ"]]
+                for i, v in enumerate(v_list): pdf.cell(c_w3[i], 7, clean(v), border=1, align='C')
+                pdf.ln()
             
             pdf.add_page(); pdf.set_font('Arial', 'B', 12); pdf.cell(0, 10, f"5. I-MR Charts - Thick: {thick}", ln=True)
             y_imr = pdf.get_y() + 2 
