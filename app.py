@@ -15,15 +15,13 @@ st.set_page_config(page_title="QC Yield & Control Limit Optimizer", layout="wide
 st.title("📊 Quality Yield & Control Limit Optimizer")
 st.markdown("---")
 
-# --- 1. FILE UPLOAD ---
-uploaded_file = st.file_uploader("Upload Excel data (.xlsx)", type=["xlsx"])
-
-if uploaded_file is not None:
-    df = pd.read_excel(uploaded_file)
+# --- CACHED DATA LOADING (PERFORMANCE OPTIMIZATION) ---
+@st.cache_data
+def load_and_preprocess(file_buffer):
+    df = pd.read_excel(file_buffer)
     df.columns = df.columns.str.strip() 
 
-    # --- DYNAMICALLY LOCATE AND RENAME THICKNESS COLUMN ---
-    # Handle both cases: User might have named it 'Thickness' or '厚度'
+    # DYNAMICALLY LOCATE AND RENAME THICKNESS COLUMN
     if 'Thickness' not in df.columns:
         target_thickness_col = None
         for i, col in enumerate(df.columns):
@@ -40,14 +38,14 @@ if uploaded_file is not None:
         elif '厚度' in df.columns:
             df.rename(columns={'厚度': 'Thickness'}, inplace=True)
 
-    # --- COLUMN TRANSLATION ---
+    # COLUMN TRANSLATION
     rename_map = {
         '烤漆降伏強度': 'YS', '烤漆抗拉強度': 'TS', '伸長率': 'EL',
         'A-B+': 'A-B+_Qty', 'A-B': 'A-B_Qty', 'A-B-': 'A-B-_Qty', 'B+': 'B+_Qty', 'B': 'B_Qty'
     }
     df.rename(columns=rename_map, inplace=True)
     
-    # --- 2. DATA PREPROCESSING & TYPE CASTING ---
+    # DATA PREPROCESSING
     if '年度' in df.columns:
         df['年度'] = df['年度'].astype(str).str.replace(r'\.0$', '', regex=True)
         
@@ -55,47 +53,51 @@ if uploaded_file is not None:
         date_str = df['烤三生產日期'].astype(str).str.replace(r'\.0$', '', regex=True)
         df['烤三生產日期'] = pd.to_datetime(date_str, format='%Y%m%d', errors='coerce').fillna(pd.to_datetime(date_str, errors='coerce'))
 
-    # --- STRICT WHITELIST FOR THICKNESS ---
+    # STRICT WHITELIST FOR THICKNESS
     if 'Thickness' in df.columns:
         df['Thickness'] = pd.to_numeric(df['Thickness'], errors='coerce').round(3)
-        # ONLY allow these exact standard sizes. Everything else is dropped.
         standard_thicknesses = [0.5, 0.6, 0.75, 0.8]
         df = df[df['Thickness'].isin(standard_thicknesses)]
         
     if '熱軋材質' in df.columns:
         df['熱軋材質'] = df['熱軋材質'].astype(str).str.strip()
 
-    # --- PERIOD CATEGORIZATION LOGIC ---
+    # PERIOD CATEGORIZATION LOGIC
     def categorize_period(date_val):
         if pd.isnull(date_val): return "Unknown"
         y = date_val.year
         q3_start = pd.Timestamp(2025, 6, 29)
         q3_end = pd.Timestamp(2025, 9, 30)
 
-        if y == 2024:
-            return "2024 (Full Year)"
+        if y == 2024: return "2024 (Full Year)"
         elif y == 2025:
-            if date_val < q3_start:
-                return "2025 H1 (Until 06/28)"
-            elif q3_start <= date_val <= q3_end:
-                return "2025 Q3 (06/29 - 09/30)"
-            else:
-                return "2025 Q4"
-        elif y == 2026:
-            return "2026 Q1"
+            if date_val < q3_start: return "2025 H1 (Until 06/28)"
+            elif q3_start <= date_val <= q3_end: return "2025 Q3 (06/29 - 09/30)"
+            else: return "2025 Q4"
+        elif y == 2026: return "2026 Q1"
         return "Other"
 
     if '烤三生產日期' in df.columns:
         df['Time_Group'] = df['烤三生產日期'].apply(categorize_period)
         df = df[~df['Time_Group'].isin(["Other", "Unknown"])]
         
-        # --- GENERATE 2025 FULL YEAR DATA ---
+        # GENERATE 2025 FULL YEAR DATA
         df_2025 = df[df['烤三生產日期'].dt.year == 2025].copy()
         if not df_2025.empty:
             df_2025['Time_Group'] = "2025 (Full Year)"
             df = pd.concat([df, df_2025], ignore_index=True)
     else:
         df['Time_Group'] = "Unknown"
+
+    return df
+
+# --- 1. FILE UPLOAD & PROCESSING ---
+uploaded_file = st.file_uploader("Upload Excel data (.xlsx)", type=["xlsx"])
+
+if uploaded_file is not None:
+    # Use cached data to prevent freezing
+    raw_df = load_and_preprocess(uploaded_file)
+    df = raw_df.copy()
 
     # --- SIDEBAR FILTERS ---
     st.sidebar.header("🔎 Dashboard Filters")
@@ -287,6 +289,7 @@ if uploaded_file is not None:
                         plot_qc_dist(ax, df_p, f, f"{f} (Overall - {period})", ov_y, is_right=(i%2!=0))
                         st.pyplot(fig)
                         fig.savefig(f"overall_{f}_{safe_p}.png", bbox_inches='tight')
+                        plt.close(fig) # <-- BỘ GIẢI PHÓNG RAM
             
             st.subheader(f"🔍 Distribution by Thickness ({period})")
             for thick in thickness_list:
@@ -302,6 +305,7 @@ if uploaded_file is not None:
                             plot_qc_dist(ax, df_thick, f, f"{f} (Thick: {thick})", local_y, is_right=(i%2!=0))
                             st.pyplot(fig)
                             fig.savefig(f"dist_{f}_{thick}_{safe_p}.png", bbox_inches='tight')
+                            plt.close(fig) # <-- BỘ GIẢI PHÓNG RAM
             st.markdown("---")
 
         # TAB 3 VISUALS
@@ -436,6 +440,7 @@ if uploaded_file is not None:
                             fig.tight_layout(); fig.subplots_adjust(right=0.85)
                             st.pyplot(fig)
                             fig.savefig(f"imr_{f}_{thick}_{safe_p}.png", bbox_inches='tight')
+                            plt.close(fig) # <-- BỘ GIẢI PHÓNG RAM
             st.markdown("---")
 
     # --- EXPORT SECTION ---
