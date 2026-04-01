@@ -22,10 +22,30 @@ if uploaded_file is not None:
     df = pd.read_excel(uploaded_file)
     df.columns = df.columns.str.strip() 
 
+    # --- DYNAMICALLY LOCATE THE CORRECT THICKNESS COLUMN ---
+    # The Excel file contains multiple columns named '厚度'. 
+    # We locate the exact one placed immediately before '型式' as highlighted by the user.
+    target_thickness_col = None
+    for i, col in enumerate(df.columns):
+        base_col = col.split('.')[0] if '.' in col else col
+        if base_col == '厚度':
+            if i + 1 < len(df.columns):
+                next_col = df.columns[i+1].split('.')[0] if '.' in df.columns[i+1] else df.columns[i+1]
+                if next_col == '型式':
+                    target_thickness_col = col
+                    break
+    
+    if target_thickness_col:
+        df.rename(columns={target_thickness_col: 'Actual_Thickness'}, inplace=True)
+    else:
+        # Fallback 
+        if '厚度' in df.columns:
+            df.rename(columns={'厚度': 'Actual_Thickness'}, inplace=True)
+
     # --- COLUMN TRANSLATION ---
     rename_map = {
         '烤漆降伏強度': 'YS', '烤漆抗拉強度': 'TS', '伸長率': 'EL',
-        'A-B+': 'A-B+數', 'A-B': 'A-B數', 'A-B-': 'A-B-數', 'B+': 'B+數', 'B': 'B數'
+        'A-B+': 'A-B+_Qty', 'A-B': 'A-B_Qty', 'A-B-': 'A-B-_Qty', 'B+': 'B+_Qty', 'B': 'B_Qty'
     }
     df.rename(columns=rename_map, inplace=True)
     
@@ -38,9 +58,9 @@ if uploaded_file is not None:
         date_str = df['烤三生產日期'].astype(str).str.replace(r'\.0$', '', regex=True)
         df['烤三生產日期'] = pd.to_datetime(date_str, format='%Y%m%d', errors='coerce').fillna(pd.to_datetime(date_str, errors='coerce'))
 
-    # STRICTLY USE '厚度' COLUMN FOR THICKNESS AND AVOID FLOATING POINT ERRORS
-    if '厚度' in df.columns:
-        df['厚度'] = pd.to_numeric(df['厚度'], errors='coerce').round(3)
+    # CAST THICKNESS AND AVOID FLOATING POINT ERRORS
+    if 'Actual_Thickness' in df.columns:
+        df['Actual_Thickness'] = pd.to_numeric(df['Actual_Thickness'], errors='coerce').round(3)
         
     if '熱軋材質' in df.columns:
         df['熱軋材質'] = df['熱軋材質'].astype(str).str.strip()
@@ -68,6 +88,7 @@ if uploaded_file is not None:
 
     if '烤三生產日期' in df.columns:
         df['Time_Group'] = df['烤三生產日期'].apply(categorize_period)
+        # Remove invalid periods to keep dashboard clean
         df = df[~df['Time_Group'].isin(["Other", "Unknown"])]
     else:
         df['Time_Group'] = "Unknown"
@@ -85,13 +106,13 @@ if uploaded_file is not None:
         selected_periods = ui_selection
         df = df[df['Time_Group'].isin(selected_periods)]
 
-    # --- GET UNIQUE THICKNESS VALUES FROM '厚度' ---
-    if '厚度' in df.columns:
-        thickness_list = sorted(df['厚度'].dropna().unique(), key=lambda x: float(x))
+    # Get dynamic thickness list
+    if 'Actual_Thickness' in df.columns:
+        thickness_list = sorted(df['Actual_Thickness'].dropna().unique(), key=lambda x: float(x))
     else:
         thickness_list = []
 
-    count_cols = [col for col in ['A-B+數', 'A-B數', 'A-B-數', 'B+數', 'B數'] if col in df.columns]
+    count_cols = [col for col in ['A-B+_Qty', 'A-B_Qty', 'A-B-_Qty', 'B+_Qty', 'B_Qty'] if col in df.columns]
     for col in count_cols: df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
     df['Total_Count'] = df[count_cols].sum(axis=1)
 
@@ -131,7 +152,7 @@ if uploaded_file is not None:
     # --- TAB 1: YIELD SUMMARY ---
     with tab1:
         st.header("1. Quality Yield Summary (Thickness ➔ Material)")
-        group_cols = ['Time_Group', '厚度', '熱軋材質']
+        group_cols = ['Time_Group', 'Actual_Thickness', '熱軋材質']
         existing_group_cols = [col for col in group_cols if col in df.columns]
         
         if existing_group_cols:
@@ -139,13 +160,13 @@ if uploaded_file is not None:
             summary_df['Total_Qty'] = summary_df[count_cols].sum(axis=1)
             summary_df = summary_df[summary_df['Total_Qty'] > 0]
             
-            for col in count_cols: summary_df[f"% {col.replace('數','')}"] = (summary_df[col]/summary_df['Total_Qty']*100).fillna(0).round(1)
+            for col in count_cols: summary_df[f"% {col.replace('_Qty','')}"] = (summary_df[col]/summary_df['Total_Qty']*100).fillna(0).round(1)
             
-            display_df = summary_df.rename(columns={'Time_Group': 'Period', '厚度': 'Thickness', '熱軋材質': 'HR Material'})
-            for col in count_cols: display_df.rename(columns={col: col.replace('數','')}, inplace=True)
+            display_df = summary_df.rename(columns={'Time_Group': 'Period', 'Actual_Thickness': 'Thickness', '熱軋材質': 'HR Material'})
+            for col in count_cols: display_df.rename(columns={col: col.replace('_Qty','')}, inplace=True)
             
             base_cols = [c for c in ['Period', 'Thickness', 'HR Material', 'Total_Qty'] if c in display_df.columns]
-            grade_cols = [c.replace('數','') for c in count_cols]
+            grade_cols = [c.replace('_Qty','') for c in count_cols]
             pct_cols = [f"% {c}" for c in grade_cols]
             
             for c in grade_cols + ['Total_Qty']:
@@ -186,7 +207,7 @@ if uploaded_file is not None:
 
     def plot_qc_dist(ax, data, feat, title, custom_y_limit, is_right=False):
         k_b = 15
-        color_map = {'A-B+數': '#2ca02c', 'A-B數': '#1f77b4', 'A-B-數': '#ff7f0e', 'B+數': '#9467bd', 'B數': '#d62728'}
+        color_map = {'A-B+_Qty': '#2ca02c', 'A-B_Qty': '#1f77b4', 'A-B-_Qty': '#ff7f0e', 'B+_Qty': '#9467bd', 'B_Qty': '#d62728'}
         mean_inf = []
         ax.grid(axis='y', linestyle=':', alpha=0.6, zorder=0)
         f_min, f_max = global_x_bounds.get(feat, (0, 100))
@@ -227,7 +248,7 @@ if uploaded_file is not None:
         ax.set_ylabel("Count", fontsize=10)
         
         if is_right:
-            legend_elements = [Patch(facecolor=color_map[k], edgecolor='white', label=k.replace('數',''), alpha=0.5) for k in color_map]
+            legend_elements = [Patch(facecolor=color_map[k], edgecolor='white', label=k.replace('_Qty',''), alpha=0.5) for k in color_map]
             ax.legend(handles=legend_elements, title="Grade", title_fontsize='9', fontsize='8', bbox_to_anchor=(1.02, 1), loc='upper left')
 
     # --- TAB 3 SETTINGS ---
@@ -240,7 +261,7 @@ if uploaded_file is not None:
         chart_method = c4.radio("I-MR Chart Limits Based On:", ["Standard Method", "IQR Filtered Method"])
 
     spec_limits = {"YS": (405, 500), "TS": (415, 550), "EL": (25, None), "YPE": (4, None)}
-    good_cols = [c for c in ['A-B+數', 'A-B數'] if c in df.columns]
+    good_cols = [c for c in ['A-B+_Qty', 'A-B_Qty'] if c in df.columns]
 
     # --- ITERATE THROUGH PERIODS ---
     for period in selected_periods:
@@ -263,7 +284,7 @@ if uploaded_file is not None:
             
             st.subheader(f"🔍 Distribution by Thickness ({period})")
             for thick in thickness_list:
-                df_thick = df_p[df_p['厚度'] == thick]
+                df_thick = df_p[df_p['Actual_Thickness'] == thick]
                 if df_thick.empty: continue
                 st.markdown(f"**📏 Thick: {thick}**")
                 local_y = get_shared_y(df_thick, ['YS', 'TS', 'EL', 'YPE']) 
@@ -283,7 +304,7 @@ if uploaded_file is not None:
             
             period_overall_data = []
             total_n_overall = df_p[count_cols].sum().sum()
-            seg_dist_overall = "N/A" if total_n_overall == 0 else ", ".join([f"{k.replace('數','')}:{int(round(df_p[k].sum()/total_n_overall*100))}%" for k in count_cols])
+            seg_dist_overall = "N/A" if total_n_overall == 0 else ", ".join([f"{k.replace('_Qty','')}:{int(round(df_p[k].sum()/total_n_overall*100))}%" for k in count_cols])
 
             for f in mech_features:
                 if good_cols:
@@ -318,7 +339,7 @@ if uploaded_file is not None:
 
             st.subheader(f"🔍 Local Control Limits & I-MR ({period})")
             for thick in thickness_list:
-                df_t = df_p[df_p['厚度'] == thick]
+                df_t = df_p[df_p['Actual_Thickness'] == thick]
                 if df_t.empty: continue
                 
                 st.markdown(f"**📏 Thick: {thick}**")
@@ -338,7 +359,7 @@ if uploaded_file is not None:
                         plot_data_dict[f] = {'values': v, 'mean_std': m_s, 'std_std': s_s, 'mean_iqr': m_i, 'std_iqr': s_i}
                         
                         total_n = df_t[count_cols].sum().sum()
-                        seg_dist = "N/A" if total_n == 0 else ", ".join([f"{k.replace('數','')}:{int(round(df_t[k].sum()/total_n*100))}%" for k in count_cols])
+                        seg_dist = "N/A" if total_n == 0 else ", ".join([f"{k.replace('_Qty','')}:{int(round(df_t[k].sum()/total_n*100))}%" for k in count_cols])
                         
                         for m_name, m_val, s_val in [("Standard", m_s, s_s), (f"IQR (k={iqr_k})", m_i, s_i)]:
                             is_std = (m_name == "Standard")
