@@ -68,6 +68,11 @@ if uploaded_file is not None:
 
     if '烤三生產日期' in df.columns:
         df['Time_Group'] = df['烤三生產日期'].apply(categorize_period)
+        
+        # --- 🧹 MÀNG LỌC DỌN RÁC (TIÊU DIỆT "OTHER" VÀ "UNKNOWN") ---
+        # Lệnh này sẽ tự động đá văng mọi cuộn thép không thuộc các năm 24, 25, 26 ra khỏi hệ thống
+        df = df[~df['Time_Group'].isin(["Other", "Unknown / No Date"])]
+        # -------------------------------------------------------------
     else:
         df['Time_Group'] = "Unknown"
 
