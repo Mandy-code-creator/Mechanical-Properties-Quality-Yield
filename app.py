@@ -200,17 +200,56 @@ if uploaded_file is not None:
                     hide_index=True
                 )
 
-        # --- XUẤT EXCEL ---
+        # --- XUẤT EXCEL CÓ MÀU (FORMATTED EXCEL) ---
         st.markdown("---")
         output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            sum_df.to_excel(writer, index=False, sheet_name='Detailed_Yield')
-            period_summary.to_excel(writer, index=False, sheet_name='Executive_Summary')
         
+        # Sử dụng engine xlsxwriter để có thể format màu sắc
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            period_summary.to_excel(writer, index=False, sheet_name='Executive_Summary')
+            sum_df.to_excel(writer, index=False, sheet_name='Detailed_Yield')
+            
+            workbook  = writer.book
+            worksheet = writer.sheets['Executive_Summary']
+
+            # 1. Định nghĩa các format
+            header_format = workbook.add_format({'bold': True, 'bg_color': '#D7E4BC', 'border': 1, 'align': 'center'})
+            num_format = workbook.add_format({'align': 'center', 'border': 1})
+            pct_format = workbook.add_format({'num_format': '0.00"%"', 'align': 'center', 'border': 1})
+
+            # 2. Format Header và Border cho toàn bảng
+            for col_num, value in enumerate(period_summary.columns.values):
+                worksheet.write(0, col_num, value, header_format)
+                worksheet.set_column(col_num, col_num, 15) # Độ rộng cột
+
+            # 3. Apply Conditional Formatting cho cột Yield (Cột G - Index 6)
+            # Màu xanh: Càng cao càng xanh
+            worksheet.conditional_format(1, 6, len(period_summary), 6, {
+                'type': '2_color_scale',
+                'min_color': "#F7FCF5", # Xanh nhạt
+                'max_color': "#41AB5D"  # Xanh đậm
+            })
+
+            # 4. Apply Conditional Formatting cho cột Defect Rate (Cột H - Index 7)
+            # Màu đỏ: Càng cao càng đỏ
+            worksheet.conditional_format(1, 7, len(period_summary), 7, {
+                'type': '2_color_scale',
+                'min_color': "#FFF5F0", # Đỏ nhạt
+                'max_color': "#EF3B2C"  # Đỏ đậm
+            })
+
+            # Format định dạng số cho toàn bộ nội dung
+            for row in range(1, len(period_summary) + 1):
+                for col in range(len(period_summary.columns)):
+                    if col >= 6: # Các cột %
+                        worksheet.write(row, col, period_summary.iloc[row-1, col]/100 if isinstance(period_summary.iloc[row-1, col], (int, float)) else period_summary.iloc[row-1, col], pct_format)
+                    else:
+                        worksheet.write(row, col, period_summary.iloc[row-1, col], num_format)
+
         st.download_button(
-            label="📥 Download Yield Summary (Excel)",
+            label="📥 Download Formatted Excel (With Colors)",
             data=output.getvalue(),
-            file_name="Yield_Summary_Chronological.xlsx",
+            file_name="Quality_Timeline_Report_Colored.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
     # --- TAB 2: DISTRIBUTION ---
