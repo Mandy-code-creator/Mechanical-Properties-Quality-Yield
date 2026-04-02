@@ -106,10 +106,10 @@ if uploaded_file is not None:
    # --- TAB 1: YIELD SUMMARY ---
     with tab1:
         st.header("1. Quality Yield Summary & Worst Offenders")
-        st.info("Overview of production yield. Sorted to show the highest risk specifications first (Severe Defects: B+ and B).")
+        st.info("Overview of production yield. Chronologically sorted from 2024 onwards.")
 
         # --- EXECUTIVE SUMMARY: CHỈ TÍNH LỖI NẶNG (B+ TRỞ XUỐNG) ---
-        st.subheader("📊 Executive Summary: Top Defect Contributors (B+, B)")
+        st.subheader("📊 Executive Summary: Production Quality Timeline")
         
         # Tạo cột tính riêng tổng số lượng lỗi nặng
         severe_grades = ['B+', 'B']
@@ -128,17 +128,24 @@ if uploaded_file is not None:
         period_summary['Yield (%)'] = (period_summary['Acceptable_Qty'] / period_summary['Total_Qty'] * 100).fillna(0).round(2)
         period_summary['Defect_Rate (%)'] = (period_summary['Severe_Bad_Qty'] / period_summary['Total_Qty'] * 100).fillna(0).round(2)
         
-        # SẮP XẾP TỶ LỆ LỖI GIẢM DẦN
-        period_summary = period_summary.sort_values(by=['Defect_Rate (%)', 'Severe_Bad_Qty'], ascending=[False, False])
+        # --- BƯỚC QUAN TRỌNG: SẮP XẾP THEO THỨ TỰ THỜI GIAN (CHRONOLOGICAL) ---
+        time_order_map = {
+            "2024 (Full Year)": 1,
+            "2025 H1 (Until 06/28)": 2,
+            "2025 Q3 (06/29 - 09/30)": 3,
+            "2025 Q4": 4,
+            "2025 (Full Year)": 5,
+            "Unknown": 99
+        }
+        # Tạo cột ảo để sort rồi xóa đi
+        period_summary['Sort_Key'] = period_summary['Time_Group'].map(time_order_map).fillna(90)
+        period_summary = period_summary.sort_values(by=['Sort_Key', 'Actual_Thickness'], ascending=[True, True])
+        period_summary = period_summary.drop(columns=['Sort_Key'])
         
         # Đổi tên cột cho rõ nghĩa trên bảng hiển thị
         period_summary.rename(columns={'Severe_Bad_Qty': 'Bad_Qty (B+, B)'}, inplace=True)
 
-        if not period_summary.empty and period_summary['Bad_Qty (B+, B)'].sum() > 0:
-            worst_row = period_summary.iloc[0]
-            
-            st.error(f"⚠️ **Executive Insight:** The highest risk item is **{worst_row['Actual_Thickness']:.2f}mm ({worst_row['HR_Material']})** during **{worst_row['Time_Group']}**, hitting a severe defect rate of **{worst_row['Defect_Rate (%)']:.2f}%** ({worst_row['Bad_Qty (B+, B)']:.0f} defective coils).")
-            
+        if not period_summary.empty:
             # Hiển thị bảng với format loại bỏ số 0 thập phân dư thừa
             st.dataframe(
                 period_summary.style.background_gradient(subset=['Defect_Rate (%)'], cmap='Reds')
@@ -155,8 +162,7 @@ if uploaded_file is not None:
                 hide_index=True
             )
         else:
-            st.success("✅ **Executive Insight:** Production is running smoothly with no severe defects (B+, B).")
-            st.dataframe(period_summary, use_container_width=True, hide_index=True)
+            st.success("✅ No production data available for the selected filters.")
 
         st.markdown("---")
 
@@ -168,18 +174,28 @@ if uploaded_file is not None:
         for col in base_grades: 
             sum_df[f"% {col}"] = ((sum_df[col] / sum_df['Total_Qty'].replace(0, np.nan)) * 100).fillna(0).round(1)
         
+        # Sắp xếp chi tiết cũng theo thời gian luôn cho đồng bộ
+        sum_df['Sort_Key'] = sum_df['Time_Group'].map(time_order_map).fillna(90)
+        sum_df = sum_df.sort_values(by=['Sort_Key', 'Actual_Thickness']).drop(columns=['Sort_Key'])
+        
         sum_df.rename(columns={'Time_Group': 'Period', 'Actual_Thickness': 'Thickness'}, inplace=True)
         
-        for period in selected_periods:
+        # Lấy danh sách Period theo đúng thứ tự thời gian để render bảng
+        ordered_periods = sorted(sum_df['Period'].unique(), key=lambda x: time_order_map.get(x, 99))
+        
+        for period in ordered_periods:
             p_data = sum_df[sum_df['Period'] == period]
             if not p_data.empty:
                 st.markdown(f"#### 📅 Period: **{period}**")
+                
+                # Format dọn dẹp số 0 cho bảng chi tiết
+                format_dict = {'Thickness': '{:.2f}', 'Total_Qty': '{:.0f}'}
+                for col in base_grades:
+                    format_dict[col] = '{:.0f}'
+                    format_dict[f"% {col}"] = '{:.1f}%'
+                
                 st.dataframe(
-                    p_data.drop(columns=['Period']).style.format({
-                        'Thickness': '{:.2f}', 
-                        'Total_Qty': '{:.0f}',
-                        **{col: '{:.0f}' for col in base_grades}
-                    }), 
+                    p_data.drop(columns=['Period']).style.format(format_dict), 
                     use_container_width=True, 
                     hide_index=True
                 )
@@ -194,7 +210,7 @@ if uploaded_file is not None:
         st.download_button(
             label="📥 Download Yield Summary (Excel)",
             data=output.getvalue(),
-            file_name="Yield_Summary.xlsx",
+            file_name="Yield_Summary_Chronological.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
     # --- TAB 2: DISTRIBUTION ---
