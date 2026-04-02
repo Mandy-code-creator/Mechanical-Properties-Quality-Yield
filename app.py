@@ -397,6 +397,7 @@ if uploaded_file is not None:
                 * 🛠️ **Recommended Action:** Immediate parameter adjustment and SPC audit required for **{top_driver}** control limits on the {top_issue['Spec']} line.
                 """)
 
+            
             # --- BỐ CỤC HIỂN THỊ CHI TIẾT THEO CỘT ---
             st.markdown("---")
             col1, col2 = st.columns(2)
