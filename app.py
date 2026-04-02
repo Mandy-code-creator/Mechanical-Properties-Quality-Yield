@@ -175,7 +175,7 @@ if uploaded_file is not None:
                 sum_df.to_excel(writer, index=False, sheet_name='Detailed_Yield')
                 workbook  = writer.book
                 worksheet = writer.sheets['Executive_Summary']
-                header_fmt = workbook.add_format({'bold': True, 'bg_color': '#D7E4BC', 'border': 1, 'align': 'center'})
+                header_fmt = workbook.add_format({'bold': True, 'bg_color': '#D7E4BC', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
                 num_fmt = workbook.add_format({'align': 'center', 'border': 1})
                 pct_fmt = workbook.add_format({'num_format': '0.00"%"', 'align': 'center', 'border': 1})
                 for col_num, value in enumerate(period_summary.columns.values):
@@ -185,8 +185,9 @@ if uploaded_file is not None:
                 worksheet.conditional_format(1, 7, len(period_summary), 7, {'type': '2_color_scale', 'min_color': "#FFF5F0", 'max_color': "#EF3B2C"})
                 for row in range(1, len(period_summary) + 1):
                     for col in range(len(period_summary.columns)):
-                        if col >= 6: worksheet.write(row, col, period_summary.iloc[row-1, col]/100 if isinstance(period_summary.iloc[row-1, col], (int, float)) else period_summary.iloc[row-1, col], pct_fmt)
-                        else: worksheet.write(row, col, period_summary.iloc[row-1, col], num_fmt)
+                        val = period_summary.iloc[row-1, col]
+                        if col >= 6 and isinstance(val, (int, float)): worksheet.write(row, col, val/100, pct_fmt)
+                        else: worksheet.write(row, col, val, num_fmt)
             st.download_button(label="📥 Download Formatted Excel", data=output.getvalue(), file_name="Colored_Yield.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         except:
             st.download_button(label="📥 Download Basic CSV", data=period_summary.to_csv(index=False).encode('utf-8'), file_name="Yield_Summary.csv", mime="text/csv")
@@ -261,7 +262,10 @@ if uploaded_file is not None:
         st.header("🧠 Executive Auto-Insight & Root Cause")
         st.info("Automated diagnostic engine: Quantifying impact based on severe defects (B+, B).")
 
+        severe_grades = ['B+', 'B']
+        df_filtered['Severe_Bad_Qty'] = df_filtered[severe_grades].sum(axis=1)
         df_filtered['Spec_Label'] = df_filtered['Actual_Thickness'].astype(str) + "mm (" + df_filtered['HR_Material'] + ")"
+
         heat_data = df_filtered.groupby(['Spec_Label', 'Time_Group']).apply(
             lambda x: (x['Severe_Bad_Qty'].sum() / x['Total_Qty'].sum() * 100) if x['Total_Qty'].sum() > 0 else 0
         )
@@ -271,30 +275,26 @@ if uploaded_file is not None:
             heatmap_long.columns = ['Spec', 'Period', 'Defect_Rate']
             top_issues = heatmap_long[heatmap_long['Defect_Rate'] > 0].sort_values('Defect_Rate', ascending=False).head(5)
 
-            # --- SỬA LỖI DOUBLE COUNTING (CHỈ ĐẾM MỖI CUỘN 1 LẦN) ---
-            # 1. Lọc chính xác cặp (Spec, Period) cho Top 3
+            top_3_specs = top_issues.head(3)['Spec'].tolist()
+            top_3_periods = top_issues.head(3)['Period'].tolist()
+            
             top_3_subsets = []
             for _, row in top_issues.head(3).iterrows():
                 subset = df_filtered[(df_filtered['Spec_Label'] == row['Spec']) & (df_filtered['Time_Group'] == row['Period'])]
                 top_3_subsets.append(subset)
             
             if top_3_subsets:
-                # XÓA TRÙNG LẶP Row_ID
                 df_top3 = pd.concat(top_3_subsets).drop_duplicates(subset=['Row_ID'])
             else:
                 df_top3 = pd.DataFrame(columns=df_filtered.columns)
 
-            # 2. Xóa trùng lặp cho dữ liệu gốc (Hàng chuẩn Benchmark)
             df_unique_global = df_filtered.drop_duplicates(subset=['Row_ID'])
 
             rc_results = {}
             for f in ['YS', 'TS', 'EL', 'YPE']:
                 if f in df_top3.columns:
-                    # Tính Mean Hàng Tốt chuẩn xác (Mỗi cuộn 1 lần)
                     good_mean_global = df_unique_global[df_unique_global['Good_Qty'] > 0][f].mean()
-                    # Tính Mean Hàng Lỗi Nặng Top 3 chuẩn xác (Mỗi cuộn 1 lần)
                     bad_mean_top3 = df_top3[df_top3['Severe_Bad_Qty'] > 0][f].mean()
-                    
                     if pd.notnull(good_mean_global) and pd.notnull(bad_mean_top3):
                         rc_results[f] = bad_mean_top3 - good_mean_global
 
@@ -313,7 +313,6 @@ if uploaded_file is not None:
                 * 📊 **Quantified Impact:** Defective coils have a {top_driver} that is on average **{abs(gap_val):.1f} {direction}** than good coils.
                 """)
 
-            # ĐÃ KHAI BÁO CỘT CHUẨN XÁC, KHÔNG CÒN LẶP BẢNG NỮA
             st.markdown("---")
             col1, col2 = st.columns(2)
 
@@ -339,7 +338,6 @@ if uploaded_file is not None:
                 top_driver = rc_s.index[0]
                 st.info(f"📏 DRILL DOWN: {top_driver} Shift by Thickness (Isolating the issue)")
                 drill_data = []
-                # Dùng dữ liệu deduplicated cho chuẩn xác
                 for th in df_unique_global['Actual_Thickness'].dropna().unique():
                     th_df = df_unique_global[df_unique_global['Actual_Thickness'] == th]
                     g_val = th_df[th_df['Good_Qty'] > 0][top_driver].mean()
@@ -369,7 +367,6 @@ if uploaded_file is not None:
 
         st.markdown("---")
         st.header("📈 Global I-MR Stability Tracking (Severe Defects: B+ and Below)")
-        # SỬ DỤNG DỮ LIỆU ĐÃ XÓA TRÙNG CHO BIỂU ĐỒ GLOBAL
         df_severe_global = df_unique_global[(df_unique_global['B+'] > 0) | (df_unique_global['B'] > 0)].sort_values(by='烤三生產日期').reset_index(drop=True)
 
         if not df_severe_global.empty:
@@ -383,9 +380,97 @@ if uploaded_file is not None:
                         x_seq = np.arange(len(vals)) 
                         mean_v = np.mean(vals)
                         
-fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 7), gridspec_kw={'height_ratios': [2, 1]})
+                        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 8), gridspec_kw={'height_ratios': [2, 1]})
+                        
+                        # --- I-Chart Updated Colors ---
+                        ax1.plot(x_seq, vals, marker='o', ms=5, lw=1.5, color='#004C99', alpha=0.9, label=f"Value ({feat})")
+                        ax1.axhline(mean_v, color='black', ls='--', lw=1.5, label=f'Mean: {mean_v:.1f}')
+                        ax1.text(x_seq[-1], mean_v, f" Mean: {mean_v:.1f}", va='bottom', color='black', fontweight='bold')
+                        
+                        v_x, v_y = [], []
+                        if feat in GLOBAL_SPECS:
+                            s = GLOBAL_SPECS[feat]
+                            if s['min']: ax1.axhline(s['min'], color='red', lw=2); ax1.text(x_seq[-1], s['min'], f" Min: {s['min']}", va='bottom', color='red', fontweight='bold')
+                            if s['max']: ax1.axhline(s['max'], color='red', lw=2); ax1.text(x_seq[-1], s['max'], f" Max: {s['max']}", va='bottom', color='red', fontweight='bold')
+                            for i, v in enumerate(vals):
+                                if (s['min'] and v < s['min']) or (s['max'] and v > s['max']):
+                                    v_x.append(i); v_y.append(v)
+                            if v_x: ax1.scatter(v_x, v_y, color='red', s=60, zorder=5)
+                        
+                        for i in range(1, len(dates)):
+                            if dates.iloc[i].year != dates.iloc[i-1].year:
+                                ax1.axvline(i, color='gray', ls=':', alpha=0.5)
+                                ax1.text(i, ax1.get_ylim()[1], f" {dates.iloc[i].year}", fontsize=10, va='top')
+
+                        ax1.set_title(f"Individual Chart (I) - {feat}", fontweight='bold')
+                        ax1.legend(loc='upper right', fontsize=9, bbox_to_anchor=(1.15, 1))
+                        ax1.set_xticks([]) 
+
+                        # --- MR-Chart Updated Colors ---
+                        mr = np.abs(np.diff(vals))
+                        mr_mean = np.mean(mr)
+                        ucl_mr = 3.267 * mr_mean
+                        
+                        ax2.plot(x_seq[1:], mr, marker='o', ms=5, lw=1.5, color='#4B0082', alpha=0.9, label="Moving Range")
+                        ax2.axhline(mr_mean, color='black', ls='--', lw=1.5, label=f'MR Mean: {mr_mean:.1f}')
+                        ax2.axhline(ucl_mr, color='red', ls=':', lw=1.5, label=f'UCL: {ucl_mr:.1f}')
+                        
+                        hv_x, hv_y = [], []
+                        for i, m_val in enumerate(mr):
+                            if m_val > ucl_mr: hv_x.append(i+1); hv_y.append(m_val)
+                        if hv_x: ax2.scatter(hv_x, hv_y, color='red', s=40, zorder=5)
+
+                        ax2.set_title("Moving Range Chart (MR)", fontweight='bold')
+                        ax2.legend(loc='upper right', fontsize=9, bbox_to_anchor=(1.15, 1))
+                        
+                        step = max(1, len(x_seq) // 12) 
+                        ax2.set_xticks(x_seq[::step])
+                        ax2.set_xticklabels(dates.dt.strftime('%Y-%m-%d').iloc[::step], rotation=45, ha='right')
+
+                        fig.tight_layout()
+                        plt.savefig(f"export_imr_global_{feat}.png", bbox_inches='tight', dpi=150)
+                        st.pyplot(fig); plt.close(fig)
+
+    # --- TAB 4: I-MR CHART (TIMELINE STABILITY) ---
+    with tab4:
+        st.header("📈 Task 4: I-MR Stability Tracking (Chronological)")
+        st.info("Analysis based on production sequence from 2024 to 2026. Red dots = Out of Spec.")
+
+        @st.fragment
+        def render_tab4():
+            imr_periods = ["All Periods"] + sorted(df_filtered['Time_Group'].dropna().unique().tolist())
+            imr_thicks = sorted(df_filtered['Actual_Thickness'].dropna().unique())
+            imr_mats = sorted(df_filtered['HR_Material'].astype(str).unique())
+            
+            c1, c2, c3 = st.columns(3)
+            sel_p = c1.selectbox("Filter Period:", imr_periods, key="t4_p")
+            sel_t = c2.selectbox("Filter Thickness:", imr_thicks, key="t4_t")
+            sel_m = c3.selectbox("Filter Material:", imr_mats, key="t4_m")
+
+            if sel_p == "All Periods":
+                imr_df = df_filtered[(df_filtered['Actual_Thickness'] == sel_t) & (df_filtered['HR_Material'] == sel_m)]
+                imr_df = imr_df.drop_duplicates(subset=['Row_ID'])
+            else:
+                imr_df = df_filtered[(df_filtered['Time_Group'] == sel_p) & (df_filtered['Actual_Thickness'] == sel_t) & (df_filtered['HR_Material'] == sel_m)]
+
+            imr_df = imr_df.sort_values(by='烤三生產日期').reset_index(drop=True)
+
+            if not imr_df.empty:
+                for feat in ['YS', 'TS', 'EL', 'YPE']:
+                    if feat in imr_df.columns:
+                        valid_data = imr_df.dropna(subset=[feat, '烤三生產日期']).copy()
+                        if len(valid_data) > 1:
+                            st.markdown(f"### 🛡️ Stability: **{feat}**")
+                            valid_data = valid_data.reset_index(drop=True)
+                            dates = valid_data['烤三生產日期']
+                            vals = valid_data[feat].values
                             
-                            # --- I-Chart ---
+                            x_seq = np.arange(len(vals)) 
+                            mean_v = np.mean(vals)
+                            
+                            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 7), gridspec_kw={'height_ratios': [2, 1]})
+                            
+                            # --- I-Chart Updated Colors ---
                             ax1.plot(x_seq, vals, marker='o', ms=5, lw=1.5, color='#004C99', alpha=0.9, label=feat)
                             ax1.axhline(mean_v, color='black', ls='--', lw=1.5, label='Mean')
                             
@@ -410,14 +495,12 @@ fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 7), gridspec_kw={'height_ratio
                             ax1.legend(loc='upper right', fontsize=8)
                             ax1.set_xticks([]) 
 
-                            # --- MR-Chart ---
+                            # --- MR-Chart Updated Colors ---
                             mr = np.abs(np.diff(vals))
                             mr_mean = np.mean(mr)
                             ucl_mr = 3.267 * mr_mean
                             
-                            # Đổi màu Cam thành Tím Đậm (Indigo)
                             ax2.plot(x_seq[1:], mr, marker='o', ms=5, lw=1.5, color='#4B0082', alpha=0.9)
-                            # Đổi Mean thành màu Đen
                             ax2.axhline(mr_mean, color='black', ls='--', lw=1.5)
                             ax2.axhline(ucl_mr, color='red', ls=':', lw=1.5)
                             
@@ -433,95 +516,7 @@ fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 7), gridspec_kw={'height_ratio
                             ax2.set_xticklabels(dates.dt.strftime('%Y-%m-%d').iloc[::step], rotation=45, ha='right')
 
                             fig.tight_layout()
-                        plt.savefig(f"export_imr_global_{feat}.png", bbox_inches='tight', dpi=150)
-                        st.pyplot(fig); plt.close(fig)
-
-    # --- TAB 4: I-MR CHART (TIMELINE STABILITY) ---
-    with tab4:
-        st.header("📈 Task 4: I-MR Stability Tracking (Chronological)")
-        st.info("Analysis based on production sequence from 2024 to 2026. Red dots = Out of Spec.")
-
-        @st.fragment
-        def render_tab4():
-            imr_periods = ["All Periods"] + sorted(df_filtered['Time_Group'].dropna().unique().tolist())
-            imr_thicks = sorted(df_filtered['Actual_Thickness'].dropna().unique())
-            imr_mats = sorted(df_filtered['HR_Material'].astype(str).unique())
-            
-            c1, c2, c3 = st.columns(3)
-            sel_p = c1.selectbox("Filter Period:", imr_periods, key="t4_p")
-            sel_t = c2.selectbox("Filter Thickness:", imr_thicks, key="t4_t")
-            sel_m = c3.selectbox("Filter Material:", imr_mats, key="t4_m")
-
-            if sel_p == "All Periods":
-                imr_df = df_filtered[(df_filtered['Actual_Thickness'] == sel_t) & (df_filtered['HR_Material'] == sel_m)]
-            else:
-                imr_df = df_filtered[(df_filtered['Time_Group'] == sel_p) & (df_filtered['Actual_Thickness'] == sel_t) & (df_filtered['HR_Material'] == sel_m)]
-
-            # SỬA LOGIC: Nếu xem All Periods thì xóa dòng đếm trùng đi cho chuẩn biểu đồ thời gian
-            if sel_p == "All Periods":
-                imr_df = imr_df.drop_duplicates(subset=['Row_ID'])
-
-            imr_df = imr_df.sort_values(by='烤三生產日期').reset_index(drop=True)
-
-            if not imr_df.empty:
-                for feat in ['YS', 'TS', 'EL', 'YPE']:
-                    if feat in imr_df.columns:
-                        valid_data = imr_df.dropna(subset=[feat, '烤三生產日期']).copy()
-                        if len(valid_data) > 1:
-                            st.markdown(f"### 🛡️ Stability: **{feat}**")
-                            valid_data = valid_data.reset_index(drop=True)
-                            dates = valid_data['烤三生產日期']
-                            vals = valid_data[feat].values
-                            
-                            x_seq = np.arange(len(vals)) 
-                            mean_v = np.mean(vals)
-                            
-                            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 7), gridspec_kw={'height_ratios': [2, 1]})
-                            
-                            ax1.plot(x_seq, vals, marker='o', ms=4, lw=1, color='#1f77b4', alpha=0.6, label=feat)
-                            ax1.axhline(mean_v, color='green', ls='--', label='Mean')
-                            
-                            if feat in GLOBAL_SPECS:
-                                s = GLOBAL_SPECS[feat]
-                                if s['min']: ax1.axhline(s['min'], color='red', lw=2)
-                                if s['max']: ax1.axhline(s['max'], color='red', lw=2)
-                                
-                                v_x, v_y = [], []
-                                for i, v in enumerate(vals):
-                                    if (s['min'] and v < s['min']) or (s['max'] and v > s['max']):
-                                        v_x.append(i); v_y.append(v)
-                                if v_x: ax1.scatter(v_x, v_y, color='red', s=60, zorder=5)
-                            
-                            if sel_p == "All Periods":
-                                for i in range(1, len(dates)):
-                                    if dates.iloc[i].year != dates.iloc[i-1].year:
-                                        ax1.axvline(i, color='black', ls='-.', alpha=0.3)
-                                        ax1.text(i, ax1.get_ylim()[1], f" {dates.iloc[i].year}", fontsize=10, va='top')
-
-                            ax1.set_title(f"Individual Chart (I) - {feat}", fontweight='bold')
-                            ax1.legend(loc='upper right', fontsize=8)
-                            ax1.set_xticks([]) 
-
-                            mr = np.abs(np.diff(vals))
-                            mr_mean = np.mean(mr)
-                            ucl_mr = 3.267 * mr_mean
-                            
-                            ax2.plot(x_seq[1:], mr, marker='o', ms=3, color='orange', alpha=0.6)
-                            ax2.axhline(mr_mean, color='green', ls='--')
-                            ax2.axhline(ucl_mr, color='red', ls=':')
-                            
-                            hv_x, hv_y = [], []
-                            for i, m_val in enumerate(mr):
-                                if m_val > ucl_mr: hv_x.append(i+1); hv_y.append(m_val)
-                            if hv_x: ax2.scatter(hv_x, hv_y, color='red', s=40, zorder=5)
-
-                            ax2.set_title("Moving Range Chart (MR)", fontweight='bold')
-                            
-                            step = max(1, len(x_seq) // 12) 
-                            ax2.set_xticks(x_seq[::step])
-                            ax2.set_xticklabels(dates.dt.strftime('%Y-%m-%d').iloc[::step], rotation=45, ha='right')
-
-                            fig.tight_layout()
+                            safe_p_imr = "".join([c if c.isalnum() else "_" for c in sel_p])
                             plt.savefig(f"export_imr_{feat}.png", bbox_inches='tight', dpi=150)
                             st.pyplot(fig); plt.close(fig)
             else:
@@ -535,7 +530,6 @@ st.sidebar.info("💡 Tip: Make sure to click through Tab 3 and Tab 4 so the app
 
 if st.sidebar.button("🖨️ Generate PDF Report"):
     try:
-        # Initialize PDF (Landscape A4)
         pdf = FPDF(orientation='L', unit='mm', format='A4')
         pdf.set_auto_page_break(auto=True, margin=15)
         
@@ -584,10 +578,8 @@ if st.sidebar.button("🖨️ Generate PDF Report"):
                 y_pos += 90 
                 chart_count += 1
 
-        # Output PDF
         pdf.output("Quality_Visual_Report.pdf")
         
-        # Download Button
         with open("Quality_Visual_Report.pdf", "rb") as f:
             st.sidebar.download_button(
                 label="✅ Click to Download your PDF Report", 
