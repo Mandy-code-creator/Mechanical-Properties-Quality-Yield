@@ -338,15 +338,48 @@ if uploaded_file is not None:
             top_issues = heatmap_long[heatmap_long['Defect_Rate'] > 0].sort_values('Defect_Rate', ascending=False).head(5)
 
             # --- BƯỚC 2: QUANTIFY IMPACT (ROOT CAUSE SCORE) ---
+            # Tập trung phân tích vào TOP 3 SEGMENTS bị lỗi nặng nhất
+            top_3_specs = top_issues.head(3)['Spec'].tolist()
+            top_3_periods = top_issues.head(3)['Period'].tolist()
+            
+            # Lọc dữ liệu thuộc về Top 3 lỗi
+            df_top3 = df_filtered[
+                (df_filtered['Spec_Label'].isin(top_3_specs)) & 
+                (df_filtered['Time_Group'].isin(top_3_periods))
+            ]
+
             rc_results = {}
             for f in ['YS', 'TS', 'EL', 'YPE']:
-                if f in df_filtered.columns:
-                    good_mean = df_filtered[df_filtered['Good_Qty'] > 0][f].mean()
-                    bad_mean = df_filtered[df_filtered['Severe_Bad_Qty'] > 0][f].mean()
-                    if pd.notnull(good_mean) and pd.notnull(bad_mean):
-                        rc_results[f] = bad_mean - good_mean
+                if f in df_top3.columns:
+                    # Tính Mean của hàng Tốt trong toàn bộ data (để làm chuẩn - Benchmark)
+                    good_mean_global = df_filtered[df_filtered['Good_Qty'] > 0][f].mean()
+                    
+                    # Tính Mean của hàng Lỗi Nặng chỉ trong Top 3 vùng Hotspot
+                    bad_mean_top3 = df_top3[df_top3['Severe_Bad_Qty'] > 0][f].mean()
+                    
+                    if pd.notnull(good_mean_global) and pd.notnull(bad_mean_top3):
+                        rc_results[f] = bad_mean_top3 - good_mean_global
 
             rc_s = pd.Series(rc_results).dropna().sort_values(key=abs, ascending=False)
+
+            # ... (Phần code hiển thị Conclusion giữ nguyên hoặc cập nhật tiêu đề cho rõ nghĩa) ...
+
+            with col2:
+                st.warning("🧠 ROOT CAUSE DRIVER (Top 3 Hotspots)")
+                st.info("Analysis: Mean difference of Bad Coils (in Top 3 problem areas) vs. Global Good Coils.")
+                
+                rc_df = rc_s.reset_index()
+                rc_df.columns = ['Mechanical Feature', 'Impact Gap (Top 3 Bad vs Good)']
+                
+                def color_gap(val):
+                    color = '#d62728' if abs(val) > 5 else ('#ff7f0e' if abs(val) > 0 else 'black')
+                    return f'color: {color}; font-weight: bold'
+
+                st.dataframe(
+                    rc_df.style.map(color_gap, subset=['Impact Gap (Top 3 Bad vs Good)'])
+                               .format({'Impact Gap (Top 3 Bad vs Good)': '{:+.2f}'}), 
+                    use_container_width=True, hide_index=True
+                )
 
             # --- BƯỚC 4: AUTO CONCLUSION ---
             if not top_issues.empty and not rc_s.empty:
