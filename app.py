@@ -103,40 +103,43 @@ if uploaded_file is not None:
     df_filtered = df[df['Time_Group'].isin(selected_periods)]
     thickness_list = sorted(df['Actual_Thickness'].dropna().unique())
 
-    # --- MENU 1: YIELD SUMMARY ---
-    elif current_tab == "1. Yield Summary":
+   # --- TAB 1: YIELD SUMMARY ---
+    with tab1:
         st.header("1. Quality Yield Summary & Worst Offenders")
-        st.info("Overview of production yield. 'Acceptable Yield' includes grades A-B+, A-B, and A-B-. 'Defect Rate' focuses strictly on severe grades (B+, B).")
+        st.info("Overview of production yield. Sorted to show the highest risk specifications first (Severe Defects: B+ and B).")
 
-        # --- EXECUTIVE SUMMARY: YIELD + DEFECT = 100% ---
-        st.subheader("📊 Executive Summary: Top Defect Contributors")
+        # --- EXECUTIVE SUMMARY: CHỈ TÍNH LỖI NẶNG (B+ TRỞ XUỐNG) ---
+        st.subheader("📊 Executive Summary: Top Defect Contributors (B+, B)")
         
-        # Tạo cột tính riêng tổng số lượng lỗi nặng (B+, B)
+        # Tạo cột tính riêng tổng số lượng lỗi nặng
         severe_grades = ['B+', 'B']
-        df_filtered['Bad_Qty (B+, B)'] = df_filtered[severe_grades].sum(axis=1)
+        df_filtered['Severe_Bad_Qty'] = df_filtered[severe_grades].sum(axis=1)
         
-        # Hàng đạt (Acceptable) = Tổng số lượng trừ đi Hàng lỗi nặng
-        df_filtered['Acceptable_Qty'] = df_filtered['Total_Qty'] - df_filtered['Bad_Qty (B+, B)']
+        # NÂNG CẤP: TÍNH HÀNG ĐẠT BẰNG CÁCH LẤY TỔNG TRỪ ĐI LỖI NẶNG (Bao gồm cả A-B-)
+        df_filtered['Acceptable_Qty'] = df_filtered['Total_Qty'] - df_filtered['Severe_Bad_Qty']
         
         # Gom nhóm theo Thời gian, Độ dày và Vật liệu
-        period_summary = df_filtered.groupby(['Time_Group', 'Actual_Thickness', 'HR_Material'])[['Total_Qty', 'Acceptable_Qty', 'Bad_Qty (B+, B)']].sum().reset_index()
+        period_summary = df_filtered.groupby(['Time_Group', 'Actual_Thickness', 'HR_Material'])[['Total_Qty', 'Acceptable_Qty', 'Severe_Bad_Qty']].sum().reset_index()
         
-        # Lọc bỏ các dòng không có dữ liệu
+        # Lọc bỏ các dòng không có dữ liệu sản xuất
         period_summary = period_summary[period_summary['Total_Qty'] > 0]
         
-        # Tính tỷ lệ % (Bây giờ Tổng 2 cột này chắc chắn = 100%)
+        # Tính tỷ lệ % chuẩn xác (Đảm bảo Yield + Defect Rate = 100%)
         period_summary['Yield (%)'] = (period_summary['Acceptable_Qty'] / period_summary['Total_Qty'] * 100).fillna(0).round(2)
-        period_summary['Defect_Rate (%)'] = (period_summary['Bad_Qty (B+, B)'] / period_summary['Total_Qty'] * 100).fillna(0).round(2)
+        period_summary['Defect_Rate (%)'] = (period_summary['Severe_Bad_Qty'] / period_summary['Total_Qty'] * 100).fillna(0).round(2)
         
-        # Sắp xếp đẩy lỗi nặng nhất lên top
-        period_summary = period_summary.sort_values(by=['Defect_Rate (%)', 'Bad_Qty (B+, B)'], ascending=[False, False])
+        # SẮP XẾP TỶ LỆ LỖI GIẢM DẦN
+        period_summary = period_summary.sort_values(by=['Defect_Rate (%)', 'Severe_Bad_Qty'], ascending=[False, False])
+        
+        # Đổi tên cột cho rõ nghĩa trên bảng hiển thị
+        period_summary.rename(columns={'Severe_Bad_Qty': 'Bad_Qty (B+, B)'}, inplace=True)
 
         if not period_summary.empty and period_summary['Bad_Qty (B+, B)'].sum() > 0:
             worst_row = period_summary.iloc[0]
             
-            st.error(f"⚠️ **Executive Insight:** The highest risk item is **{worst_row['Actual_Thickness']:.2f}mm ({worst_row['HR_Material']})** during **{worst_row['Time_Group']}**, hitting a severe defect rate of **{worst_row['Defect_Rate (%)']:.2f}%**.")
+            st.error(f"⚠️ **Executive Insight:** The highest risk item is **{worst_row['Actual_Thickness']:.2f}mm ({worst_row['HR_Material']})** during **{worst_row['Time_Group']}**, hitting a severe defect rate of **{worst_row['Defect_Rate (%)']:.2f}%** ({worst_row['Bad_Qty (B+, B)']:.0f} defective coils).")
             
-            # Hiển thị bảng
+            # Hiển thị bảng với format loại bỏ số 0 thập phân dư thừa
             st.dataframe(
                 period_summary.style.background_gradient(subset=['Defect_Rate (%)'], cmap='Reds')
                                     .background_gradient(subset=['Yield (%)'], cmap='Greens')
@@ -177,7 +180,23 @@ if uploaded_file is not None:
                         'Total_Qty': '{:.0f}',
                         **{col: '{:.0f}' for col in base_grades}
                     }), 
-                    use_container
+                    use_container_width=True, 
+                    hide_index=True
+                )
+
+        # --- XUẤT EXCEL ---
+        st.markdown("---")
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            sum_df.to_excel(writer, index=False, sheet_name='Detailed_Yield')
+            period_summary.to_excel(writer, index=False, sheet_name='Executive_Summary')
+        
+        st.download_button(
+            label="📥 Download Yield Summary (Excel)",
+            data=output.getvalue(),
+            file_name="Yield_Summary.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
     # --- TAB 2: DISTRIBUTION ---
     global_x_bounds = {}
     for feat in mech_features:
