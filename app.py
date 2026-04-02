@@ -530,64 +530,92 @@ st.sidebar.info("💡 Tip: Make sure to click through Tab 3 and Tab 4 so the app
 
 if st.sidebar.button("🖨️ Generate PDF Report"):
     try:
+        from PIL import Image as PILImage
+
+        def get_image_height_mm(img_path, width_mm):
+            """Calculate actual image height in mm to prevent cropping"""
+            with PILImage.open(img_path) as img:
+                w_px, h_px = img.size
+            return width_mm * h_px / w_px
+
+        def add_section_title(pdf, title):
+            pdf.set_font('Arial', 'B', 16)
+            pdf.cell(0, 10, title, ln=True, align='C')
+            pdf.ln(3)
+
+        def add_images_to_pdf(pdf, img_files, title, page_width_mm=267, margin_x=15):
+            """
+            Add a list of images to PDF, auto page-break when space runs out.
+            A4 Landscape: 297mm x 210mm, 15mm margins => usable height ~180mm
+            """
+            if not img_files:
+                return
+
+            pdf.add_page()
+            add_section_title(pdf, title)
+
+            top_margin = 15
+            bottom_margin = 15
+            page_height = 210
+            y_cursor = pdf.get_y()
+
+            for img_path in img_files:
+                img_h = get_image_height_mm(img_path, page_width_mm)
+
+                # If image doesn't fit on current page, start a new one
+                if y_cursor + img_h > page_height - bottom_margin:
+                    pdf.add_page()
+                    y_cursor = top_margin
+
+                pdf.image(img_path, x=margin_x, y=y_cursor, w=page_width_mm)
+                y_cursor += img_h + 5  # 5mm gap between images
+                pdf.set_y(y_cursor)
+
         pdf = FPDF(orientation='L', unit='mm', format='A4')
-        pdf.set_auto_page_break(auto=True, margin=15)
-        
+        pdf.set_auto_page_break(auto=False)  # Manual page control
+
         # --- PART 1: HEATMAP DIAGNOSTIC ---
         if os.path.exists("export_heatmap.png"):
             pdf.add_page()
-            pdf.set_font('Arial', 'B', 16)
-            pdf.cell(0, 10, "1. DEFECT HOTSPOT DIAGNOSTIC MAP (SEVERE DEFECTS)", ln=True, align='C')
-            pdf.image("export_heatmap.png", x=15, y=25, w=260)
-            
-        # --- PART 2: GLOBAL I-MR (FROM TAB 3) ---
-        global_imr_files = [f"export_imr_global_{feat}.png" for feat in ['YS', 'TS', 'EL', 'YPE'] if os.path.exists(f"export_imr_global_{feat}.png")]
-        
-        if global_imr_files:
-            pdf.add_page()
-            pdf.set_font('Arial', 'B', 16)
-            pdf.cell(0, 10, "2. GLOBAL PROCESS STABILITY (2024-2025 ALL SEVERE DEFECTS)", ln=True, align='C')
-            
-            y_pos = 25
-            chart_count = 0
-            for img_path in global_imr_files:
-                if chart_count == 2: 
-                    pdf.add_page()
-                    y_pos = 20
-                    chart_count = 0
-                pdf.image(img_path, x=20, y=y_pos, w=250)
-                y_pos += 90 
-                chart_count += 1
+            add_section_title(pdf, "1. DEFECT HOTSPOT DIAGNOSTIC MAP (SEVERE DEFECTS)")
+            img_w = 260
+            img_h = get_image_height_mm("export_heatmap.png", img_w)
+            pdf.image("export_heatmap.png", x=15, y=pdf.get_y(), w=img_w)
 
-        # --- PART 3: FILTERED I-MR (FROM TAB 4) ---
-        filtered_imr_files = [f"export_imr_{feat}.png" for feat in ['YS', 'TS', 'EL', 'YPE'] if os.path.exists(f"export_imr_{feat}.png")]
-        
-        if filtered_imr_files:
-            pdf.add_page()
-            pdf.set_font('Arial', 'B', 16)
-            pdf.cell(0, 10, "3. SPECIFIC I-MR TRACKING (FILTERED SEGMENT)", ln=True, align='C')
-            
-            y_pos = 25
-            chart_count = 0
-            for img_path in filtered_imr_files:
-                if chart_count == 2:
-                    pdf.add_page()
-                    y_pos = 20
-                    chart_count = 0
-                pdf.image(img_path, x=20, y=y_pos, w=250)
-                y_pos += 90 
-                chart_count += 1
+        # --- PART 1B: VIEW 1 CHARTS ---
+        # Add this line wherever you render charts in Tab 1/2:
+        # fig.savefig("export_view1_chart1.png", dpi=150, bbox_inches='tight')
+        view1_files = sorted([
+            f for f in os.listdir('.') 
+            if f.startswith("export_view1_") and f.endswith(".png")
+        ])
+        if view1_files:
+            add_images_to_pdf(pdf, view1_files, "1B. OVERVIEW / SUMMARY CHARTS (VIEW 1)")
+
+        # --- PART 2: GLOBAL I-MR (TAB 3) ---
+        global_imr_files = [
+            f"export_imr_global_{feat}.png" for feat in ['YS', 'TS', 'EL', 'YPE']
+            if os.path.exists(f"export_imr_global_{feat}.png")
+        ]
+        add_images_to_pdf(pdf, global_imr_files, "2. GLOBAL PROCESS STABILITY (2024-2025 ALL SEVERE DEFECTS)")
+
+        # --- PART 3: FILTERED I-MR (TAB 4) ---
+        filtered_imr_files = [
+            f"export_imr_{feat}.png" for feat in ['YS', 'TS', 'EL', 'YPE']
+            if os.path.exists(f"export_imr_{feat}.png")
+        ]
+        add_images_to_pdf(pdf, filtered_imr_files, "3. SPECIFIC I-MR TRACKING (FILTERED SEGMENT)")
 
         pdf.output("Quality_Visual_Report.pdf")
-        
+
         with open("Quality_Visual_Report.pdf", "rb") as f:
             st.sidebar.download_button(
-                label="✅ Click to Download your PDF Report", 
-                data=f.read(), 
-                file_name="Quality_Visual_Report.pdf", 
+                label="✅ Click to Download your PDF Report",
+                data=f.read(),
+                file_name="Quality_Visual_Report.pdf",
                 mime="application/pdf"
             )
-        st.sidebar.success("🎉 PDF Generated Successfully! File is ready to download.")
-        
+        st.sidebar.success("🎉 PDF Generated Successfully!")
+
     except Exception as e:
         st.sidebar.error(f"⚠️ Error generating PDF: {e}")
