@@ -12,7 +12,14 @@ import os
 st.set_page_config(page_title="Quality Dashboard", layout="wide")
 st.title("📊 Production Quality Yield & Distribution")
 st.markdown("---")
-
+# 👇👇👇 CHÈN ĐOẠN NÀY VÀO NGAY ĐÂY 👇👇👇
+GLOBAL_SPECS = {
+    'YS': {'min': 400, 'max': 460, 'target': 430},
+    'TS': {'min': 410, 'max': 470, 'target': 440},
+    'EL': {'min': 25, 'max': None, 'target': None},
+    'YPE': {'min': 4, 'max': None, 'target': None}
+}
+# 👆👆👆 ============================== 👆👆👆
 uploaded_file = st.file_uploader("Upload Excel data (.xlsx)", type=["xlsx"])
 
 if uploaded_file is not None:
