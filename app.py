@@ -383,50 +383,56 @@ if uploaded_file is not None:
                         x_seq = np.arange(len(vals)) 
                         mean_v = np.mean(vals)
                         
-                        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 8), gridspec_kw={'height_ratios': [2, 1]})
-                        ax1.plot(x_seq, vals, marker='o', ms=4, lw=1, color='#1f77b4', alpha=0.6, label=f"Value ({feat})")
-                        ax1.axhline(mean_v, color='green', ls='--', label=f'Mean: {mean_v:.1f}')
-                        ax1.text(x_seq[-1], mean_v, f" Mean: {mean_v:.1f}", va='bottom', color='green', fontweight='bold')
-                        
-                        v_x, v_y = [], []
-                        if feat in GLOBAL_SPECS:
-                            s = GLOBAL_SPECS[feat]
-                            if s['min']: ax1.axhline(s['min'], color='red', lw=2); ax1.text(x_seq[-1], s['min'], f" Min: {s['min']}", va='bottom', color='red', fontweight='bold')
-                            if s['max']: ax1.axhline(s['max'], color='red', lw=2); ax1.text(x_seq[-1], s['max'], f" Max: {s['max']}", va='bottom', color='red', fontweight='bold')
-                            for i, v in enumerate(vals):
-                                if (s['min'] and v < s['min']) or (s['max'] and v > s['max']):
-                                    v_x.append(i); v_y.append(v)
-                            if v_x: ax1.scatter(v_x, v_y, color='red', s=60, zorder=5)
-                        
-                        for i in range(1, len(dates)):
-                            if dates.iloc[i].year != dates.iloc[i-1].year:
-                                ax1.axvline(i, color='black', ls='-.', alpha=0.3)
-                                ax1.text(i, ax1.get_ylim()[1], f" {dates.iloc[i].year}", fontsize=10, va='top')
+fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 7), gridspec_kw={'height_ratios': [2, 1]})
+                            
+                            # --- I-Chart ---
+                            ax1.plot(x_seq, vals, marker='o', ms=5, lw=1.5, color='#004C99', alpha=0.9, label=feat)
+                            ax1.axhline(mean_v, color='black', ls='--', lw=1.5, label='Mean')
+                            
+                            if feat in GLOBAL_SPECS:
+                                s = GLOBAL_SPECS[feat]
+                                if s['min']: ax1.axhline(s['min'], color='red', lw=2)
+                                if s['max']: ax1.axhline(s['max'], color='red', lw=2)
+                                
+                                v_x, v_y = [], []
+                                for i, v in enumerate(vals):
+                                    if (s['min'] and v < s['min']) or (s['max'] and v > s['max']):
+                                        v_x.append(i); v_y.append(v)
+                                if v_x: ax1.scatter(v_x, v_y, color='red', s=60, zorder=5)
+                            
+                            if sel_p == "All Periods":
+                                for i in range(1, len(dates)):
+                                    if dates.iloc[i].year != dates.iloc[i-1].year:
+                                        ax1.axvline(i, color='gray', ls=':', alpha=0.5)
+                                        ax1.text(i, ax1.get_ylim()[1], f" {dates.iloc[i].year}", fontsize=10, va='top')
 
-                        ax1.set_title(f"Individual Chart (I) - {feat}", fontweight='bold')
-                        ax1.legend(loc='upper right', fontsize=9, bbox_to_anchor=(1.15, 1))
-                        ax1.set_xticks([]) 
+                            ax1.set_title(f"Individual Chart (I) - {feat}", fontweight='bold')
+                            ax1.legend(loc='upper right', fontsize=8)
+                            ax1.set_xticks([]) 
 
-                        mr = np.abs(np.diff(vals))
-                        mr_mean = np.mean(mr)
-                        ucl_mr = 3.267 * mr_mean
-                        ax2.plot(x_seq[1:], mr, marker='o', ms=3, color='orange', alpha=0.6, label="Moving Range")
-                        ax2.axhline(mr_mean, color='green', ls='--', label=f'MR Mean: {mr_mean:.1f}')
-                        ax2.axhline(ucl_mr, color='red', ls=':', label=f'UCL: {ucl_mr:.1f}')
-                        
-                        hv_x, hv_y = [], []
-                        for i, m_val in enumerate(mr):
-                            if m_val > ucl_mr: hv_x.append(i+1); hv_y.append(m_val)
-                        if hv_x: ax2.scatter(hv_x, hv_y, color='red', s=40, zorder=5)
+                            # --- MR-Chart ---
+                            mr = np.abs(np.diff(vals))
+                            mr_mean = np.mean(mr)
+                            ucl_mr = 3.267 * mr_mean
+                            
+                            # Đổi màu Cam thành Tím Đậm (Indigo)
+                            ax2.plot(x_seq[1:], mr, marker='o', ms=5, lw=1.5, color='#4B0082', alpha=0.9)
+                            # Đổi Mean thành màu Đen
+                            ax2.axhline(mr_mean, color='black', ls='--', lw=1.5)
+                            ax2.axhline(ucl_mr, color='red', ls=':', lw=1.5)
+                            
+                            hv_x, hv_y = [], []
+                            for i, m_val in enumerate(mr):
+                                if m_val > ucl_mr: hv_x.append(i+1); hv_y.append(m_val)
+                            if hv_x: ax2.scatter(hv_x, hv_y, color='red', s=40, zorder=5)
 
-                        ax2.set_title("Moving Range Chart (MR)", fontweight='bold')
-                        ax2.legend(loc='upper right', fontsize=9, bbox_to_anchor=(1.15, 1))
-                        
-                        step = max(1, len(x_seq) // 12) 
-                        ax2.set_xticks(x_seq[::step])
-                        ax2.set_xticklabels(dates.dt.strftime('%Y-%m-%d').iloc[::step], rotation=45, ha='right')
+                            ax2.set_title("Moving Range Chart (MR)", fontweight='bold')
+                            
+                            step = max(1, len(x_seq) // 12) 
+                            ax2.set_xticks(x_seq[::step])
+                            ax2.set_xticklabels(dates.dt.strftime('%Y-%m-%d').iloc[::step], rotation=45, ha='right')
 
-                        fig.tight_layout()
+                            fig.tight_layout()
                         plt.savefig(f"export_imr_global_{feat}.png", bbox_inches='tight', dpi=150)
                         st.pyplot(fig); plt.close(fig)
 
