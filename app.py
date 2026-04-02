@@ -89,9 +89,19 @@ if uploaded_file is not None:
         df['Time_Group'] = "Unknown"
 
     # --- ĐÃ SỬA: THÊM TAB 3 VÀO DANH SÁCH KHAI BÁO ---
-    tab0, tab1, tab2, tab3, tab4 = st.tabs(["0. Raw Check", "1. Yield Summary", "2. Distribution Analysis", "3.🔍 Root Cause & Diagnostic Analysis", "4. I-MR Analysis"])
-
-    with tab0:
+   # --- ĐIỀU HƯỚNG TỐI ƯU TỐC ĐỘ (NAVIGATION MENU) ---
+    st.sidebar.header("📂 Menu Điều Hướng")
+    menu_options = [
+        "0. Raw Check", 
+        "1. Yield Summary", 
+        "2. Distribution Analysis", 
+        "3. Executive Auto-Insight", 
+        "4. I-MR Stability Tracking",
+        "5. I-MR (Acceptable Grades)"  # <-- THÊM DÒNG NÀY VÀO ĐÂY NHÉ
+    ]
+    current_tab = st.sidebar.radio("Chọn Task muốn xem:", menu_options)
+    st.sidebar.markdown("---")
+    if current_tab == "0. Raw Check":
         st.dataframe(df.head(10), use_container_width=True)
 
     # --- GLOBAL FILTERING ---
@@ -104,7 +114,7 @@ if uploaded_file is not None:
     thickness_list = sorted(df['Actual_Thickness'].dropna().unique())
 
    # --- TAB 1: YIELD SUMMARY ---
-    with tab1:
+    elif current_tab == "1. Yield Summary":
         st.header("1. Quality Yield Summary & Worst Offenders")
         st.info("Overview of production yield. Sorted to show the highest risk specifications first (Severe Defects: B+ and B).")
 
@@ -240,7 +250,7 @@ if uploaded_file is not None:
         ax.legend(handles=[Patch(facecolor=c_map[g], label=g) for g in base_grades if g in data.columns], loc='upper right', fontsize=7)
         ax.set_xlim(fmin, fmax); ax.set_ylim(0, y_lim); ax.set_title(title, fontsize=10, fontweight='bold')
 
-    with tab2:
+    elif current_tab == "2. Distribution Analysis":
         for period in selected_periods:
             df_p = df_filtered[df_filtered['Time_Group'] == period]
             if df_p.empty: continue
@@ -265,7 +275,7 @@ if uploaded_file is not None:
                         st.pyplot(fig); plt.close(fig)
 
 # --- TAB 3: EXECUTIVE AUTO-INSIGHT & ROOT CAUSE ---
-    with tab3:
+    elif current_tab == "3. Executive Auto-Insight":
         st.header("🧠 Executive Auto-Insight & Root Cause")
         st.info("Automated diagnostic engine: Quantifying impact and recommending actions based on severe defects (B+, B).")
 
@@ -490,7 +500,7 @@ if uploaded_file is not None:
         else:
             st.warning("No severe defects found across the entire dataset.")
    # --- TAB 4: I-MR CHART (TIMELINE STABILITY) ---
-    with tab4:
+    elif current_tab == "4. I-MR Stability Tracking":
         st.header("📈 Task 4: I-MR Stability Tracking (Chronological)")
         st.info("Analysis based on production sequence from 2024 to 2026. Red dots = Out of Spec.")
 
@@ -601,7 +611,7 @@ if uploaded_file is not None:
     # (Giữ nguyên logic Export ban đầu của bạn...)
     st.sidebar.header("📥 Export Options")
 # --- TASK 5: I-MR CHART (ACCEPTABLE GRADES) ---
-    elif current_tab == "5. I-MR (Acceptable Grades)":
+   elif current_tab == "5. I-MR (Acceptable Grades)":
         st.header("📈 Task 5: SPC I-MR Tracking (Acceptable Grades)")
         st.info("Monitoring process stability for acceptable production (Grades A-B+, A-B, A-B-). Proactive monitoring to prevent drift.")
 
