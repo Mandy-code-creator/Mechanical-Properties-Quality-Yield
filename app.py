@@ -299,16 +299,52 @@ if uploaded_file is not None:
                     clrs.append(c_map[g])
                     m = np.average(td[feat].values, weights=td[g].values)
                     ax.axvline(m, color=c_map[g], ls='--', lw=1.2)
-                    m_info.append({'v': m, 'c': c_map[g]})
+                    m_info.append({'v': m, 'c': c_map[g], 'label': g})
+
             if v_l:
                 ax.hist(v_l, bins=np.linspace(fmin, fmax, 16), weights=w_l, color=clrs,
                         stacked=True, edgecolor='white', alpha=0.7)
+
+                # --- SMART LABEL PLACEMENT TO AVOID OVERLAP ---
                 m_info.sort(key=lambda x: x['v'])
+                x_range = fmax - fmin
+                min_gap = x_range * 0.045
+
+                positions = [info['v'] for info in m_info]
+                for _ in range(50):
+                    moved = False
+                    for i in range(1, len(positions)):
+                        if positions[i] - positions[i-1] < min_gap:
+                            mid = (positions[i] + positions[i-1]) / 2
+                            positions[i-1] = mid - min_gap / 2
+                            positions[i] = mid + min_gap / 2
+                            moved = True
+                    if not moved:
+                        break
+
+                y_levels = [y_lim * (0.92 - (i % 4) * 0.13) for i in range(len(m_info))]
+
                 for i, info in enumerate(m_info):
-                    h = y_lim * (0.85 - (i % 3) * 0.12)
-                    ax.text(info['v'], h, f"{info['v']:.1f}", color='white', fontweight='bold',
-                            fontsize=8, ha='center',
-                            bbox=dict(facecolor=info['c'], alpha=0.8, boxstyle='round,pad=0.2'))
+                    x_pos = positions[i]
+                    y_pos = y_levels[i]
+                    ax.annotate(
+                        f"{info['v']:.1f}",
+                        xy=(info['v'], y_pos * 0.6),
+                        xytext=(x_pos, y_pos),
+                        color='white',
+                        fontweight='bold',
+                        fontsize=8,
+                        ha='center',
+                        va='center',
+                        bbox=dict(facecolor=info['c'], alpha=0.85, boxstyle='round,pad=0.25'),
+                        arrowprops=dict(
+                            arrowstyle='-',
+                            color=info['c'],
+                            lw=1.0,
+                            alpha=0.6
+                        ) if abs(x_pos - info['v']) > min_gap * 0.3 else None
+                    )
+
             ax.legend(
                 handles=[Patch(facecolor=c_map[g], label=g) for g in base_grades if g in data.columns],
                 loc='upper right', fontsize=7
