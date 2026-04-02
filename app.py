@@ -337,7 +337,7 @@ if uploaded_file is not None:
             heatmap_long.columns = ['Spec', 'Period', 'Defect_Rate']
             top_issues = heatmap_long[heatmap_long['Defect_Rate'] > 0].sort_values('Defect_Rate', ascending=False).head(5)
 
-            # --- BƯỚC 2: QUANTIFY IMPACT (ROOT CAUSE SCORE) ---
+# --- BƯỚC 2: QUANTIFY IMPACT (ROOT CAUSE SCORE) ---
             # Tập trung phân tích vào TOP 3 SEGMENTS bị lỗi nặng nhất
             top_3_specs = top_issues.head(3)['Spec'].tolist()
             top_3_periods = top_issues.head(3)['Period'].tolist()
@@ -362,7 +362,17 @@ if uploaded_file is not None:
 
             rc_s = pd.Series(rc_results).dropna().sort_values(key=abs, ascending=False)
 
-            # ... (Phần code hiển thị Conclusion giữ nguyên hoặc cập nhật tiêu đề cho rõ nghĩa) ...
+            # --- KHAI BÁO CỘT ĐỂ TRÁNH LỖI NAMEERROR ---
+            st.markdown("---")
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.error("🔥 TOP 5 PROBLEM SEGMENTS (Where to fix)")
+                st.dataframe(
+                    top_issues.style.background_gradient(subset=['Defect_Rate'], cmap='Reds')
+                                    .format({'Defect_Rate': '{:.1f}%'}), 
+                    use_container_width=True, hide_index=True
+                )
 
             with col2:
                 st.warning("🧠 ROOT CAUSE DRIVER (Top 3 Hotspots)")
