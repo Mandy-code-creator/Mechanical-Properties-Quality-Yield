@@ -600,7 +600,140 @@ if uploaded_file is not None:
     # --- EXPORT SECTION ---
     # (Giữ nguyên logic Export ban đầu của bạn...)
     st.sidebar.header("📥 Export Options")
-  
+# --- TASK 5: I-MR CHART (ACCEPTABLE GRADES) ---
+    elif current_tab == "5. I-MR (Acceptable Grades)":
+        st.header("📈 Task 5: SPC I-MR Tracking (Acceptable Grades)")
+        st.info("Monitoring process stability for acceptable production (Grades A-B+, A-B, A-B-). Proactive monitoring to prevent drift.")
+
+        GLOBAL_SPECS = {
+            'YS': {'min': 400, 'max': 460, 'target': 430},
+            'TS': {'min': 410, 'max': 470, 'target': 440},
+            'EL': {'min': 25, 'max': None, 'target': None},
+            'YPE': {'min': 4, 'max': None, 'target': None}
+        }
+
+        # CHỈ LẤY DỮ LIỆU CỦA HÀNG ĐẠT (A-B+, A-B, A-B-)
+        df_good = df_filtered[(df_filtered['A-B+'] > 0) | (df_filtered['A-B'] > 0) | (df_filtered['A-B-'] > 0)].copy()
+
+        imr_periods = ["All Periods"] + sorted(df_good['Time_Group'].dropna().unique().tolist())
+        imr_thicks = ["All Thicknesses"] + sorted(df_good['Actual_Thickness'].dropna().unique().tolist())
+        imr_mats = ["All Materials"] + sorted(df_good['HR_Material'].astype(str).unique().tolist())
+        
+        c1, c2, c3 = st.columns(3)
+        sel_p = c1.selectbox("Filter Period:", imr_periods, key="t5_p")
+        sel_t = c2.selectbox("Filter Thickness:", imr_thicks, key="t5_t")
+        sel_m = c3.selectbox("Filter Material:", imr_mats, key="t5_m")
+
+        imr_df = df_good.copy()
+        if sel_p != "All Periods": imr_df = imr_df[imr_df['Time_Group'] == sel_p]
+        if sel_t != "All Thicknesses": imr_df = imr_df[imr_df['Actual_Thickness'] == sel_t]
+        if sel_m != "All Materials": imr_df = imr_df[imr_df['HR_Material'] == sel_m]
+                                
+        imr_df = imr_df.sort_values(by='烤三生產日期').reset_index(drop=True)
+
+        if not imr_df.empty:
+            if sel_t == "All Thicknesses" or sel_m == "All Materials":
+                st.warning("⚠️ **Lưu ý SPC:** Bạn đang xem 'Toàn dữ liệu' (Trộn lẫn nhiều quy cách). Đường kiểm soát máy (UCL/LCL màu tím) sẽ dao động rộng hơn bình thường do khác biệt bản chất vật liệu.")
+                
+            for feat in ['YS', 'TS', 'EL', 'YPE']:
+                if feat in imr_df.columns:
+                    valid_data = imr_df.dropna(subset=[feat, '烤三生產日期']).copy()
+                    if len(valid_data) > 1:
+                        st.markdown(f"### 🛡️ Process Stability (Acceptable Grades): **{feat}**")
+                        
+                        valid_data = valid_data.reset_index(drop=True)
+                        dates = valid_data['烤三生產日期']
+                        vals = valid_data[feat].values
+                        
+                        x_seq = np.arange(len(vals)) 
+                        mean_v = np.mean(vals)
+                        mr = np.abs(np.diff(vals))
+                        mr_mean = np.mean(mr)
+                        
+                        ucl_i = mean_v + 2.66 * mr_mean
+                        lcl_i = mean_v - 2.66 * mr_mean
+                        ucl_mr = 3.267 * mr_mean
+                        
+                        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 8), gridspec_kw={'height_ratios': [2, 1]})
+                        
+                        # --- I-CHART ---
+                        # Màu Line Xanh Lá Cây tượng trưng cho hàng Đạt
+                        ax1.plot(x_seq, vals, marker='o', ms=4, lw=1, color='#2ca02c', alpha=0.7, label=f"Value ({feat})")
+                        
+                        ax1.axhline(mean_v, color='blue', ls='--', label=f'Mean: {mean_v:.1f}')
+                        ax1.text(x_seq[-1], mean_v, f" Mean: {mean_v:.1f}", va='bottom', color='blue', fontweight='bold')
+                        
+                        ax1.axhline(ucl_i, color='purple', ls='-.', alpha=0.7, label=f'UCL (Control Limit)')
+                        ax1.axhline(lcl_i, color='purple', ls='-.', alpha=0.7)
+                        ax1.fill_between(x_seq, lcl_i, ucl_i, color='purple', alpha=0.05) 
+                        
+                        out_ctrl_x, out_ctrl_y = [], []
+                        out_spec_x, out_spec_y = [], []
+                        
+                        if feat in GLOBAL_SPECS:
+                            s = GLOBAL_SPECS[feat]
+                            if s['min']: 
+                                ax1.axhline(s['min'], color='red', lw=2, label=f"LSL: {s['min']}")
+                                ax1.text(x_seq[-1], s['min'], f" LSL: {s['min']}", va='bottom', color='red', fontweight='bold')
+                            if s['max']: 
+                                ax1.axhline(s['max'], color='red', lw=2, label=f"USL: {s['max']}")
+                                ax1.text(x_seq[-1], s['max'], f" USL: {s['max']}", va='bottom', color='red', fontweight='bold')
+                            
+                            for i, v in enumerate(vals):
+                                if (s['min'] and v < s['min']) or (s['max'] and v > s['max']):
+                                    out_spec_x.append(i); out_spec_y.append(v)
+                                elif v > ucl_i or v < lcl_i:
+                                    out_ctrl_x.append(i); out_ctrl_y.append(v)
+                        else:
+                            for i, v in enumerate(vals):
+                                if v > ucl_i or v < lcl_i:
+                                    out_ctrl_x.append(i); out_ctrl_y.append(v)
+
+                        if out_ctrl_x: ax1.scatter(out_ctrl_x, out_ctrl_y, color='orange', s=50, zorder=5, label='Instability')
+                        if out_spec_x: ax1.scatter(out_spec_x, out_spec_y, color='red', s=80, zorder=6, label='Out of Spec')
+                        
+                        if sel_p == "All Periods":
+                            for i in range(1, len(dates)):
+                                if dates.iloc[i].year != dates.iloc[i-1].year:
+                                    ax1.axvline(i, color='black', ls=':', alpha=0.4)
+                                    ax1.text(i, ax1.get_ylim()[1], f" {dates.iloc[i].year}", fontsize=10, va='top')
+
+                        ax1.set_title(f"Individual Chart (I) - {feat} (Acceptable Grades)", fontweight='bold')
+                        ax1.legend(loc='upper right', fontsize=9, bbox_to_anchor=(1.15, 1))
+                        ax1.set_xticks([]) 
+
+                        # --- MR-CHART ---
+                        ax2.plot(x_seq[1:], mr, marker='o', ms=3, color='orange', alpha=0.6, label="Moving Range")
+                        
+                        ax2.axhline(mr_mean, color='blue', ls='--', label=f'MR Mean: {mr_mean:.1f}')
+                        ax2.text(x_seq[-1], mr_mean, f" Mean: {mr_mean:.1f}", va='bottom', color='blue', fontweight='bold')
+                        
+                        ax2.axhline(ucl_mr, color='red', ls=':', label=f'UCL: {ucl_mr:.1f}')
+                        ax2.text(x_seq[-1], ucl_mr, f" UCL: {ucl_mr:.1f}", va='bottom', color='red', fontweight='bold')
+                        
+                        hv_x, hv_y = [], []
+                        for i, m_val in enumerate(mr):
+                            if m_val > ucl_mr: hv_x.append(i+1); hv_y.append(m_val)
+                        if hv_x: ax2.scatter(hv_x, hv_y, color='red', s=40, zorder=5)
+
+                        ax2.set_title("Moving Range Chart (MR)", fontweight='bold')
+                        ax2.legend(loc='upper right', fontsize=9, bbox_to_anchor=(1.15, 1))
+                        
+                        step = max(1, len(x_seq) // 12) 
+                        ax2.set_xticks(x_seq[::step])
+                        ax2.set_xticklabels(dates.dt.strftime('%Y-%m-%d').iloc[::step], rotation=45, ha='right')
+
+                        fig.tight_layout()
+                        st.pyplot(fig); plt.close(fig)
+                        
+                        if out_spec_x:
+                            st.warning(f"⚠️ **NOTE:** {len(out_spec_x)} coils are 'Acceptable' overall but have {feat} slightly out of spec. (Possibly downgraded to A-B- for this reason).")
+                        elif out_ctrl_x:
+                            st.warning(f"⚠️ **WARNING:** Process is unstable! {len(out_ctrl_x)} coils drifted outside natural Machine Control Limits. Check process variation.")
+                        else:
+                            st.success(f"✅ **STABLE:** Process is perfectly stable and well within Machine Capabilities for Acceptable production.")
+        else:
+            st.success("No acceptable production data found for the selected combination.")  
 # --- EXPORT PDF VISUAL REPORT ---
     st.sidebar.header("📥 Export PDF Report")
     st.sidebar.info("Navigate through the tabs to generate and update charts, then click below to compile them into a PDF.")
