@@ -586,114 +586,119 @@ if uploaded_file is not None:
                             st.success(f"✅ **Global Insight:** {feat} is globally within specification limits.")
         else:
             st.warning("No severe defects found across the entire dataset.")
-   # --- TAB 4: I-MR CHART (TIMELINE STABILITY) ---
+# --- TAB 4: I-MR CHART (TIMELINE STABILITY) ---
     with tab4:
         st.header("📈 Task 4: I-MR Stability Tracking (Chronological)")
         st.info("Analysis based on production sequence from 2024 to 2026. Red dots = Out of Spec.")
 
-        GLOBAL_SPECS = {
-            'YS': {'min': 400, 'max': 460, 'target': 430},
-            'TS': {'min': 410, 'max': 470, 'target': 440},
-            'EL': {'min': 25, 'max': None, 'target': None},
-            'YPE': {'min': 4, 'max': None, 'target': None}
-        }
+        # BỌC TOÀN BỘ LOGIC TAB 4 VÀO @st.fragment ĐỂ KHÔNG BỊ LOAD LẠI TOÀN BỘ APP
+        @st.fragment
+        def render_tab4():
+            GLOBAL_SPECS = {
+                'YS': {'min': 400, 'max': 460, 'target': 430},
+                'TS': {'min': 410, 'max': 470, 'target': 440},
+                'EL': {'min': 25, 'max': None, 'target': None},
+                'YPE': {'min': 4, 'max': None, 'target': None}
+            }
 
-        # Filters for Task 4
-        imr_periods = ["All Periods"] + sorted(df_filtered['Time_Group'].dropna().unique().tolist())
-        imr_thicks = sorted(df_filtered['Actual_Thickness'].dropna().unique())
-        imr_mats = sorted(df_filtered['HR_Material'].astype(str).unique())
-        
-        c1, c2, c3 = st.columns(3)
-        sel_p = c1.selectbox("Filter Period:", imr_periods, key="t4_p")
-        sel_t = c2.selectbox("Filter Thickness:", imr_thicks, key="t4_t")
-        sel_m = c3.selectbox("Filter Material:", imr_mats, key="t4_m")
+            # Filters for Task 4
+            imr_periods = ["All Periods"] + sorted(df_filtered['Time_Group'].dropna().unique().tolist())
+            imr_thicks = sorted(df_filtered['Actual_Thickness'].dropna().unique())
+            imr_mats = sorted(df_filtered['HR_Material'].astype(str).unique())
+            
+            c1, c2, c3 = st.columns(3)
+            sel_p = c1.selectbox("Filter Period:", imr_periods, key="t4_p")
+            sel_t = c2.selectbox("Filter Thickness:", imr_thicks, key="t4_t")
+            sel_m = c3.selectbox("Filter Material:", imr_mats, key="t4_m")
 
-        if sel_p == "All Periods":
-            imr_df = df_filtered[(df_filtered['Actual_Thickness'] == sel_t) & 
-                                (df_filtered['HR_Material'] == sel_m)]
-        else:
-            imr_df = df_filtered[(df_filtered['Time_Group'] == sel_p) & 
-                                (df_filtered['Actual_Thickness'] == sel_t) & 
-                                (df_filtered['HR_Material'] == sel_m)]
+            if sel_p == "All Periods":
+                imr_df = df_filtered[(df_filtered['Actual_Thickness'] == sel_t) & 
+                                    (df_filtered['HR_Material'] == sel_m)]
+            else:
+                imr_df = df_filtered[(df_filtered['Time_Group'] == sel_p) & 
+                                    (df_filtered['Actual_Thickness'] == sel_t) & 
+                                    (df_filtered['HR_Material'] == sel_m)]
 
-        imr_df = imr_df.sort_values(by='烤三生產日期').reset_index(drop=True)
+            imr_df = imr_df.sort_values(by='烤三生產日期').reset_index(drop=True)
 
-        if not imr_df.empty:
-            for feat in ['YS', 'TS', 'EL', 'YPE']:
-                if feat in imr_df.columns:
-                    valid_data = imr_df.dropna(subset=[feat, '烤三生產日期']).copy()
-                    if len(valid_data) > 1:
-                        st.markdown(f"### 🛡️ Stability: **{feat}**")
-                        
-                        # Khúc này đã được canh lề chuẩn 100%
-                        valid_data = valid_data.reset_index(drop=True)
-                        dates = valid_data['烤三生產日期']
-                        vals = valid_data[feat].values
-                        
-                        x_seq = np.arange(len(vals)) 
-                        mean_v = np.mean(vals)
-                        
-                        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 7), gridspec_kw={'height_ratios': [2, 1]})
-                        
-                        # --- I-Chart ---
-                        ax1.plot(x_seq, vals, marker='o', ms=4, lw=1, color='#1f77b4', alpha=0.6, label=feat)
-                        ax1.axhline(mean_v, color='green', ls='--', label='Mean')
-                        
-                        if feat in GLOBAL_SPECS:
-                            s = GLOBAL_SPECS[feat]
-                            if s['min']: ax1.axhline(s['min'], color='red', lw=2)
-                            if s['max']: ax1.axhline(s['max'], color='red', lw=2)
+            if not imr_df.empty:
+                for feat in ['YS', 'TS', 'EL', 'YPE']:
+                    if feat in imr_df.columns:
+                        valid_data = imr_df.dropna(subset=[feat, '烤三生產日期']).copy()
+                        if len(valid_data) > 1:
+                            st.markdown(f"### 🛡️ Stability: **{feat}**")
                             
-                            v_x, v_y = [], []
-                            for i, v in enumerate(vals):
-                                if (s['min'] and v < s['min']) or (s['max'] and v > s['max']):
-                                    v_x.append(i); v_y.append(v)
-                            if v_x: ax1.scatter(v_x, v_y, color='red', s=60, zorder=5)
-                        
-                        # Vạch chia năm
-                        if sel_p == "All Periods":
-                            for i in range(1, len(dates)):
-                                if dates.iloc[i].year != dates.iloc[i-1].year:
-                                    ax1.axvline(i, color='black', ls='-.', alpha=0.3)
-                                    ax1.text(i, ax1.get_ylim()[1], f" {dates.iloc[i].year}", fontsize=10, va='top')
+                            valid_data = valid_data.reset_index(drop=True)
+                            dates = valid_data['烤三生產日期']
+                            vals = valid_data[feat].values
+                            
+                            x_seq = np.arange(len(vals)) 
+                            mean_v = np.mean(vals)
+                            
+                            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 7), gridspec_kw={'height_ratios': [2, 1]})
+                            
+                            # --- I-Chart ---
+                            ax1.plot(x_seq, vals, marker='o', ms=4, lw=1, color='#1f77b4', alpha=0.6, label=feat)
+                            ax1.axhline(mean_v, color='green', ls='--', label='Mean')
+                            
+                            if feat in GLOBAL_SPECS:
+                                s = GLOBAL_SPECS[feat]
+                                if s['min']: ax1.axhline(s['min'], color='red', lw=2)
+                                if s['max']: ax1.axhline(s['max'], color='red', lw=2)
+                                
+                                v_x, v_y = [], []
+                                for i, v in enumerate(vals):
+                                    if (s['min'] and v < s['min']) or (s['max'] and v > s['max']):
+                                        v_x.append(i); v_y.append(v)
+                                if v_x: ax1.scatter(v_x, v_y, color='red', s=60, zorder=5)
+                            
+                            # Vạch chia năm
+                            if sel_p == "All Periods":
+                                for i in range(1, len(dates)):
+                                    if dates.iloc[i].year != dates.iloc[i-1].year:
+                                        ax1.axvline(i, color='black', ls='-.', alpha=0.3)
+                                        ax1.text(i, ax1.get_ylim()[1], f" {dates.iloc[i].year}", fontsize=10, va='top')
 
-                        ax1.set_title(f"Individual Chart (I) - {feat}", fontweight='bold')
-                        ax1.legend(loc='upper right', fontsize=8)
-                        ax1.set_xticks([]) # Ẩn nhãn X trục trên cho thoáng
+                            ax1.set_title(f"Individual Chart (I) - {feat}", fontweight='bold')
+                            ax1.legend(loc='upper right', fontsize=8)
+                            ax1.set_xticks([]) # Ẩn nhãn X trục trên cho thoáng
 
-                        # --- MR-Chart ---
-                        mr = np.abs(np.diff(vals))
-                        mr_mean = np.mean(mr)
-                        ucl_mr = 3.267 * mr_mean
-                        
-                        ax2.plot(x_seq[1:], mr, marker='o', ms=3, color='orange', alpha=0.6)
-                        ax2.axhline(mr_mean, color='green', ls='--')
-                        ax2.axhline(ucl_mr, color='red', ls=':')
-                        
-                        hv_x, hv_y = [], []
-                        for i, m_val in enumerate(mr):
-                            if m_val > ucl_mr: hv_x.append(i+1); hv_y.append(m_val)
-                        if hv_x: ax2.scatter(hv_x, hv_y, color='red', s=40, zorder=5)
+                            # --- MR-Chart ---
+                            mr = np.abs(np.diff(vals))
+                            mr_mean = np.mean(mr)
+                            ucl_mr = 3.267 * mr_mean
+                            
+                            ax2.plot(x_seq[1:], mr, marker='o', ms=3, color='orange', alpha=0.6)
+                            ax2.axhline(mr_mean, color='green', ls='--')
+                            ax2.axhline(ucl_mr, color='red', ls=':')
+                            
+                            hv_x, hv_y = [], []
+                            for i, m_val in enumerate(mr):
+                                if m_val > ucl_mr: hv_x.append(i+1); hv_y.append(m_val)
+                            if hv_x: ax2.scatter(hv_x, hv_y, color='red', s=40, zorder=5)
 
-                        ax2.set_title("Moving Range Chart (MR)", fontweight='bold')
-                        
-                        # Trục X: tự động căn chỉnh hiển thị 10-15 nhãn ngày
-                        step = max(1, len(x_seq) // 12) 
-                        ax2.set_xticks(x_seq[::step])
-                        ax2.set_xticklabels(dates.dt.strftime('%Y-%m-%d').iloc[::step], rotation=45, ha='right')
+                            ax2.set_title("Moving Range Chart (MR)", fontweight='bold')
+                            
+                            # Trục X: tự động căn chỉnh hiển thị 10-15 nhãn ngày
+                            step = max(1, len(x_seq) // 12) 
+                            ax2.set_xticks(x_seq[::step])
+                            ax2.set_xticklabels(dates.dt.strftime('%Y-%m-%d').iloc[::step], rotation=45, ha='right')
 
-                        fig.tight_layout()
-                        
-                        safe_p_imr = "".join([c if c.isalnum() else "_" for c in sel_p])
-                        plt.savefig(f"export_imr_{feat}.png", bbox_inches='tight', dpi=150)
-                        st.pyplot(fig); plt.close(fig)
-                        
-                        if v_x:
-                            st.error(f"⚠️ **Stability Insight:** Found {len(v_x)} out-of-spec points for {feat}.")
-                        else:
-                            st.success(f"✅ **Stability Insight:** {feat} is within specification limits.")
-        else:
-            st.warning("No data found for the selected combination.")                
+                            fig.tight_layout()
+                            
+                            safe_p_imr = "".join([c if c.isalnum() else "_" for c in sel_p])
+                            plt.savefig(f"export_imr_{feat}.png", bbox_inches='tight', dpi=150)
+                            st.pyplot(fig); plt.close(fig)
+                            
+                            if v_x:
+                                st.error(f"⚠️ **Stability Insight:** Found {len(v_x)} out-of-spec points for {feat}.")
+                            else:
+                                st.success(f"✅ **Stability Insight:** {feat} is within specification limits.")
+            else:
+                st.warning("No data found for the selected combination.")
+
+        # Gọi hàm fragment ra để nó chạy
+        render_tab4()                
     # --- EXPORT SECTION ---
     # (Giữ nguyên logic Export ban đầu của bạn...)
     st.sidebar.header("📥 Export Options")
