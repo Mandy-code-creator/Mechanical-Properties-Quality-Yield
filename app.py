@@ -259,52 +259,130 @@ if uploaded_file is not None:
                         plot_dist(ax, df_t, f, f"{f} (Thick: {thick})", ly)
                         st.pyplot(fig); plt.close(fig)
 
-# --- TAB 3: DIAGNOSTIC FLOW (HEATMAP ONLY) ---
+# --- TAB 3: EXECUTIVE AUTO-INSIGHT & ROOT CAUSE ---
     with tab3:
-        st.header("🔍 Quality Diagnostic: Defect Hotspot Analysis")
-        st.info("Focusing exclusively on severe defects (B+ and B) to identify critical production issues.")
-        
-        # --- HEATMAP (CHỈ TÍNH LỖI B+ TRỞ XUỐNG) ---
-        heatmap_bad_grades = ['B+', 'B']
-        defect_str = ", ".join(heatmap_bad_grades)
-        st.subheader(f"Defect Hotspot Map (Severe Defect Rate: {defect_str})")
-        
-        df_filtered['Spec_Label'] = df_filtered['Actual_Thickness'].astype(str) + "mm (" + df_filtered['HR_Material'] + ")"
-        
-        # Tạo cột đếm lỗi riêng cho Heatmap
-        df_filtered['Heatmap_Bad_Qty'] = df_filtered[heatmap_bad_grades].sum(axis=1)
-        
-        # THUẬT TOÁN: Tính Weighted Average CHỈ CHO B+ VÀ B
-        heat_data = df_filtered.groupby(['Spec_Label', 'Time_Group']).apply(
-            lambda x: (x['Heatmap_Bad_Qty'].sum() / x['Total_Qty'].sum() * 100) if x['Total_Qty'].sum() > 0 else 0
-        ).unstack()
+        st.header("🧠 Executive Auto-Insight & Root Cause")
+        st.info("Automated diagnostic engine: Quantifying impact and recommending actions based on severe defects (B+, B).")
 
-        if not heat_data.empty:
-            fig, ax = plt.subplots(figsize=(12, 6))
-            vmax_threshold = 30.0 if heat_data.max().max() > 30 else heat_data.max().max()
-            import seaborn as sns
-            sns.heatmap(heat_data, annot=True, fmt=".1f", cmap="YlOrRd", linewidths=.5, vmax=vmax_threshold, ax=ax)
-            ax.set_title(f"HOTSPOT MAP: SEVERE DEFECT RATE ({defect_str})", fontsize=12, fontweight='bold', color='#d62728', pad=15)
-            ax.set_ylabel("Specification")
-            ax.set_xlabel("Production Period")
-            fig.tight_layout()
+        # --- CHUẨN BỊ DỮ LIỆU LỖI NẶNG ---
+        severe_grades = ['B+', 'B']
+        df_filtered['Severe_Bad_Qty'] = df_filtered[severe_grades].sum(axis=1)
+        df_filtered['Spec_Label'] = df_filtered['Actual_Thickness'].astype(str) + "mm (" + df_filtered['HR_Material'] + ")"
+
+        # --- BƯỚC 1: XÁC ĐỊNH TOP PROBLEM (AUTO HIGHLIGHT) ---
+        heat_data = df_filtered.groupby(['Spec_Label', 'Time_Group']).apply(
+            lambda x: (x['Severe_Bad_Qty'].sum() / x['Total_Qty'].sum() * 100) if x['Total_Qty'].sum() > 0 else 0
+        )
+        
+        if not heat_data.empty and heat_data.max() > 0:
+            heatmap_long = heat_data.reset_index()
+            heatmap_long.columns = ['Spec', 'Period', 'Defect_Rate']
+            top_issues = heatmap_long[heatmap_long['Defect_Rate'] > 0].sort_values('Defect_Rate', ascending=False).head(5)
+
+            # --- BƯỚC 2: QUANTIFY IMPACT (ROOT CAUSE SCORE) ---
+            rc_results = {}
+            for f in ['YS', 'TS', 'EL', 'YPE']:
+                if f in df_filtered.columns:
+                    good_mean = df_filtered[df_filtered['Good_Qty'] > 0][f].mean()
+                    bad_mean = df_filtered[df_filtered['Severe_Bad_Qty'] > 0][f].mean()
+                    # Chỉ tính gap nếu có đủ data cả hàng Good và Bad
+                    if pd.notnull(good_mean) and pd.notnull(bad_mean):
+                        rc_results[f] = bad_mean - good_mean
+
+            rc_s = pd.Series(rc_results).dropna().sort_values(key=abs, ascending=False)
+
+            # --- BƯỚC 4: AUTO CONCLUSION (ĐƯA LÊN ĐẦU ĐỂ SẾP ĐỌC TRƯỚC) ---
+            if not top_issues.empty and not rc_s.empty:
+                top_issue = top_issues.iloc[0]
+                top_driver = rc_s.index[0]
+                gap_val = rc_s.iloc[0]
+                direction = "HIGHER ⬆️" if gap_val > 0 else "LOWER ⬇️"
+
+                st.success(f"""
+                ### 🎯 EXECUTIVE CONCLUSION & ACTION PLAN:
+                
+                * 🚨 **Biggest Hotspot:** Specification **{top_issue['Spec']}** during **{top_issue['Period']}** (Defect Rate hits **{top_issue['Defect_Rate']:.1f}%**).
+                * 🧠 **Main Root Cause Driver:** **{top_driver}** is the primary culprit causing these severe defects.
+                * 📊 **Quantified Impact:** Defective coils have a {top_driver} that is on average **{abs(gap_val):.1f} {direction}** than good coils.
+                * 🛠️ **Recommended Action:** Immediate parameter adjustment and SPC audit required for **{top_driver}** control limits on the {top_issue['Spec']} line.
+                """)
+
+            # --- BỐ CỤC HIỂN THỊ CHI TIẾT THEO CỘT ---
+            st.markdown("---")
+            col1, col2 = st.columns(2)
             
-            # LƯU ẢNH HEATMAP ĐỂ XUẤT PDF
+            with col1:
+                st.error("🔥 TOP 5 PROBLEM SEGMENTS (Where to fix)")
+                st.dataframe(
+                    top_issues.style.background_gradient(subset=['Defect_Rate'], cmap='Reds')
+                                    .format({'Defect_Rate': '{:.1f}%'}), 
+                    use_container_width=True, hide_index=True
+                )
+
+            with col2:
+                st.warning("🧠 ROOT CAUSE DRIVER (What to fix)")
+                rc_df = rc_s.reset_index()
+                rc_df.columns = ['Mechanical Feature', 'Impact Gap (Bad vs Good)']
+                
+                def color_gap(val):
+                    color = '#d62728' if abs(val) > 5 else ('#ff7f0e' if abs(val) > 0 else 'black')
+                    return f'color: {color}; font-weight: bold'
+
+                st.dataframe(
+                    rc_df.style.map(color_gap, subset=['Impact Gap (Bad vs Good)'])
+                               .format({'Impact Gap (Bad vs Good)': '{:+.2f}'}), 
+                    use_container_width=True, hide_index=True
+                )
+
+            # --- BƯỚC 3: DRILL DOWN BẰNG PIVOT TABLE TỰ ĐỘNG ---
+            if not rc_s.empty:
+                st.markdown("---")
+                top_driver = rc_s.index[0]
+                st.info(f"📏 DRILL DOWN: {top_driver} Shift by Thickness (Isolating the issue)")
+                
+                drill_data = []
+                for th in df_filtered['Actual_Thickness'].dropna().unique():
+                    th_df = df_filtered[df_filtered['Actual_Thickness'] == th]
+                    g_val = th_df[th_df['Good_Qty'] > 0][top_driver].mean()
+                    b_val = th_df[th_df['Severe_Bad_Qty'] > 0][top_driver].mean()
+                    
+                    if pd.notnull(g_val) or pd.notnull(b_val):
+                        drill_data.append({
+                            'Thickness': th,
+                            'GOOD Coils (Mean)': g_val,
+                            'BAD Coils (Mean)': b_val,
+                            'Impact Gap': (b_val - g_val) if (pd.notnull(g_val) and pd.notnull(b_val)) else None
+                        })
+                        
+                drill_df = pd.DataFrame(drill_data).sort_values('Impact Gap', key=abs, ascending=False)
+                
+                st.dataframe(
+                    drill_df.style.map(color_gap, subset=['Impact Gap'])
+                                  .format({
+                                      'Thickness': '{:.2f}mm', 
+                                      'GOOD Coils (Mean)': '{:.1f}', 
+                                      'BAD Coils (Mean)': '{:.1f}', 
+                                      'Impact Gap': '{:+.1f}'
+                                  }), 
+                    use_container_width=True, hide_index=True
+                )
+                
+            # Đẩy cái Heatmap hình ảnh xuống dưới cùng để làm "Bằng chứng" (Evidence)
+            st.markdown("---")
+            st.subheader("🗺️ Evidence: Visual Hotspot Map")
+            heat_pivot = heat_data.unstack()
+            fig, ax = plt.subplots(figsize=(12, 5))
+            vmax_threshold = 30.0 if heat_pivot.max().max() > 30 else heat_pivot.max().max()
+            import seaborn as sns
+            sns.heatmap(heat_pivot, annot=True, fmt=".1f", cmap="YlOrRd", linewidths=.5, vmax=vmax_threshold, ax=ax)
+            ax.set_title("SEVERE DEFECT RATE (%)", fontweight='bold', color='#d62728')
+            ax.set_ylabel(""); ax.set_xlabel("")
+            fig.tight_layout()
             plt.savefig("export_heatmap.png", bbox_inches='tight', dpi=150)
             st.pyplot(fig); plt.close(fig)
 
-            # --- AUTO DETECT TOP 3 HOTSPOTS (B+, B) ---
-            st.markdown("### 🚨 Top 3 Critical Hotspots (Action Required)")
-            stacked_data = heat_data.stack().reset_index()
-            stacked_data.columns = ['Spec', 'Period', 'Defect_Rate']
-            top_3 = stacked_data[stacked_data['Defect_Rate'] > 0].sort_values(by='Defect_Rate', ascending=False).head(3)
-            
-            if not top_3.empty:
-                for idx, row in top_3.iterrows():
-                    alert_color = "🔴" if row['Defect_Rate'] > 15 else "🟠"
-                    st.error(f"{alert_color} **{row['Spec']}** during **{row['Period']}**: Severe Defect Rate hits **{row['Defect_Rate']:.1f}%**")
-            else:
-                st.success("✅ Process is stable. No critical severe hotspots detected.")
+        else:
+            st.success("✅ Process is completely stable. No severe defect patterns detected to analyze.")
 
         # --- STEP 3: GLOBAL TIMELINE I-MR CHARTS ---
         st.markdown("---")
