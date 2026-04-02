@@ -525,48 +525,71 @@ if uploaded_file is not None:
 
 # --- EXPORT SECTION ---
 st.sidebar.header("📥 Export PDF Report")
-st.sidebar.info("Navigate through the tabs to generate and update charts, then click below to compile them into a PDF.")
+st.sidebar.info("💡 Mẹo: Đảm bảo bạn đã lướt qua Tab 3 và Tab 4 để App vẽ xong các biểu đồ trước khi ấn nút xuất PDF nhé.")
 
-if st.sidebar.button("🖨️ Generate PDF containing Charts"):
-    pdf = FPDF(orientation='L', unit='mm', format='A4')
-    pdf.set_auto_page_break(auto=True, margin=15)
-    
-    if os.path.exists("export_heatmap.png"):
-        pdf.add_page()
-        pdf.set_font('Arial', 'B', 16)
-        pdf.cell(0, 10, "1. DEFECT HOTSPOT DIAGNOSTIC MAP", ln=True, align='C')
-        pdf.image("export_heatmap.png", x=15, y=25, w=260)
+if st.sidebar.button("🖨️ Generate PDF Report"):
+    try:
+        # Khởi tạo file PDF khổ A4 nằm ngang (Landscape)
+        pdf = FPDF(orientation='L', unit='mm', format='A4')
+        pdf.set_auto_page_break(auto=True, margin=15)
         
-    if os.path.exists("export_pareto.png"):
-        pdf.add_page()
-        pdf.set_font('Arial', 'B', 16)
-        pdf.cell(0, 10, "2. PARETO ANALYSIS (MAIN DEFECTS)", ln=True, align='C')
-        pdf.image("export_pareto.png", x=30, y=25, w=220)
-        
-    pdf.add_page()
-    pdf.set_font('Arial', 'B', 16)
-    pdf.cell(0, 10, "3. I-MR PROCESS STABILITY TRACKING", ln=True, align='C')
-    
-    y_pos = 25
-    chart_count = 0
-    for feat in ['YS', 'TS', 'EL', 'YPE']:
-        img_path = f"export_imr_{feat}.png"
-        if os.path.exists(img_path):
-            if chart_count == 2: 
-                pdf.add_page()
-                y_pos = 20
-                chart_count = 0
-            pdf.image(img_path, x=20, y=y_pos, w=250)
-            y_pos += 90 
-            chart_count += 1
+        # --- PHẦN 1: HEATMAP DIAGNOSTIC ---
+        if os.path.exists("export_heatmap.png"):
+            pdf.add_page()
+            pdf.set_font('Arial', 'B', 16)
+            pdf.cell(0, 10, "1. DEFECT HOTSPOT DIAGNOSTIC MAP (SEVERE DEFECTS)", ln=True, align='C')
+            pdf.image("export_heatmap.png", x=15, y=25, w=260)
             
-    pdf.output("Quality_Visual_Report.pdf")
-    
-    with open("Quality_Visual_Report.pdf", "rb") as f:
-        st.sidebar.download_button(
-            label="✅ Click to Download your PDF Report", 
-            data=f.read(), 
-            file_name="Quality_Visual_Report.pdf", 
-            mime="application/pdf"
-        )
-    st.sidebar.success("PDF Generated Successfully!")
+        # --- PHẦN 2: GLOBAL I-MR (TỪ TAB 3) ---
+        global_imr_files = [f"export_imr_global_{feat}.png" for feat in ['YS', 'TS', 'EL', 'YPE'] if os.path.exists(f"export_imr_global_{feat}.png")]
+        
+        if global_imr_files:
+            pdf.add_page()
+            pdf.set_font('Arial', 'B', 16)
+            pdf.cell(0, 10, "2. GLOBAL PROCESS STABILITY (2024-2025 ALL SEVERE DEFECTS)", ln=True, align='C')
+            
+            y_pos = 25
+            chart_count = 0
+            for img_path in global_imr_files:
+                if chart_count == 2: # Cứ dán đủ 2 hình thì lật sang trang mới
+                    pdf.add_page()
+                    y_pos = 20
+                    chart_count = 0
+                pdf.image(img_path, x=20, y=y_pos, w=250)
+                y_pos += 90 
+                chart_count += 1
+
+        # --- PHẦN 3: FILTERED I-MR (TỪ TAB 4) ---
+        filtered_imr_files = [f"export_imr_{feat}.png" for feat in ['YS', 'TS', 'EL', 'YPE'] if os.path.exists(f"export_imr_{feat}.png")]
+        
+        if filtered_imr_files:
+            pdf.add_page()
+            pdf.set_font('Arial', 'B', 16)
+            pdf.cell(0, 10, "3. SPECIFIC I-MR TRACKING (FILTERED SEGMENT)", ln=True, align='C')
+            
+            y_pos = 25
+            chart_count = 0
+            for img_path in filtered_imr_files:
+                if chart_count == 2:
+                    pdf.add_page()
+                    y_pos = 20
+                    chart_count = 0
+                pdf.image(img_path, x=20, y=y_pos, w=250)
+                y_pos += 90 
+                chart_count += 1
+
+        # Xuất file PDF
+        pdf.output("Quality_Visual_Report.pdf")
+        
+        # Tạo nút Download xuất hiện ngay bên dưới
+        with open("Quality_Visual_Report.pdf", "rb") as f:
+            st.sidebar.download_button(
+                label="✅ Click to Download your PDF Report", 
+                data=f.read(), 
+                file_name="Quality_Visual_Report.pdf", 
+                mime="application/pdf"
+            )
+        st.sidebar.success("🎉 PDF Generated Successfully! File is ready to download.")
+        
+    except Exception as e:
+        st.sidebar.error(f"⚠️ Đã có lỗi xảy ra trong quá trình tạo PDF: {e}")
