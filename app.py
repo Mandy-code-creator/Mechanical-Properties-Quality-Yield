@@ -108,7 +108,8 @@ if uploaded_file is not None:
         "1. Yield Summary",
         "2. Distribution Analysis",
         "3. Root Cause & Diagnostic",
-        "4. I-MR Analysis"
+        "4. I-MR Analysis",
+        "5. Scrap Analysis"
     ])
 
     with tab0:
@@ -764,7 +765,175 @@ if uploaded_file is not None:
                 st.warning("No data found for the selected combination.")
 
         render_tab4()
+    # --- TAB 5: TAIL SCRAP ANALYSIS ---
+    with tab5:
+        st.header("5. Tail Scrap & Length Rejection Analysis")
+        st.info("Analysis of tail scrap rejection rate based on 實測長度 (Measured Length) and 尾料剔退 (Tail Scrap Rejected).")
 
+        # --- CHECK COLUMNS EXIST ---
+        col_length = '實測長度'
+        col_scrap = '尾料剔退'
+
+        if col_length not in df_filtered.columns or col_scrap not in df_filtered.columns:
+            missing = [c for c in [col_length, col_scrap] if c not in df_filtered.columns]
+            st.error(f"Missing columns: {missing}. Please check your data file.")
+        else:
+            df_scrap = df_filtered.copy()
+            df_scrap[col_length] = pd.to_numeric(df_scrap[col_length], errors='coerce')
+            df_scrap[col_scrap] = pd.to_numeric(df_scrap[col_scrap], errors='coerce')
+            df_scrap = df_scrap.dropna(subset=[col_length, col_scrap])
+            df_scrap = df_scrap[df_scrap[col_length] > 0]
+
+            # --- LOGIC: Scrap Rate = 尾料剔退 / 實測長度 * 100 ---
+            df_scrap['Scrap_Rate (%)'] = (df_scrap[col_scrap] / df_scrap[col_length] * 100).round(2)
+
+            # ================================================
+            # SECTION 1: BY TIME PERIOD ONLY
+            # ================================================
+            st.markdown("---")
+            st.subheader("📅 Section 1: Scrap Rate by Time Period")
+
+            scrap_by_period = df_scrap.groupby('Time_Group').agg(
+                Total_Length=pd.NamedAgg(column=col_length, aggfunc='sum'),
+                Total_Scrap=pd.NamedAgg(column=col_scrap, aggfunc='sum'),
+                Coil_Count=pd.NamedAgg(column=col_length, aggfunc='count'),
+            ).reset_index()
+            scrap_by_period['Scrap_Rate (%)'] = (
+                scrap_by_period['Total_Scrap'] / scrap_by_period['Total_Length'] * 100
+            ).round(2)
+            scrap_by_period['Sort_Key'] = scrap_by_period['Time_Group'].map(time_order_map).fillna(99)
+            scrap_by_period = scrap_by_period.sort_values('Sort_Key').drop(columns=['Sort_Key'])
+            scrap_by_period.rename(columns={'Time_Group': 'Time Period'}, inplace=True)
+
+            # --- Display styled table ---
+            st.dataframe(
+                scrap_by_period.style
+                    .background_gradient(subset=['Scrap_Rate (%)'], cmap='Reds')
+                    .format({
+                        'Total_Length': '{:,.1f}',
+                        'Total_Scrap': '{:,.1f}',
+                        'Coil_Count': '{:.0f}',
+                        'Scrap_Rate (%)': '{:.2f}%'
+                    }),
+                use_container_width=True, hide_index=True
+            )
+
+            # --- Bar chart by period ---
+            fig1, ax1 = plt.subplots(figsize=(10, 4))
+            colors = plt.cm.Reds(
+                np.linspace(0.3, 0.85, len(scrap_by_period))
+            )
+            bars = ax1.bar(
+                scrap_by_period['Time Period'],
+                scrap_by_period['Scrap_Rate (%)'],
+                color=colors, edgecolor='white'
+            )
+            for bar, val in zip(bars, scrap_by_period['Scrap_Rate (%)']):
+                ax1.text(
+                    bar.get_x() + bar.get_width() / 2,
+                    bar.get_height() + 0.05,
+                    f"{val:.2f}%", ha='center', va='bottom',
+                    fontsize=10, fontweight='bold', color='#333'
+                )
+            ax1.set_title("Tail Scrap Rate (%) by Time Period", fontweight='bold', fontsize=13)
+            ax1.set_xlabel("")
+            ax1.set_ylabel("Scrap Rate (%)")
+            ax1.tick_params(axis='x', rotation=20)
+            ax1.set_ylim(0, scrap_by_period['Scrap_Rate (%)'].max() * 1.3 + 0.1)
+            fig1.tight_layout()
+            plt.savefig("export_tab5_scrap_by_period.png", bbox_inches='tight', dpi=150)
+            st.pyplot(fig1)
+            plt.close(fig1)
+
+            # ================================================
+            # SECTION 2: BY TIME PERIOD + THICKNESS + MATERIAL
+            # ================================================
+            st.markdown("---")
+            st.subheader("📏 Section 2: Scrap Rate by Period / Thickness / Material")
+
+            scrap_detail = df_scrap.groupby(
+                ['Time_Group', 'Actual_Thickness', 'HR_Material']
+            ).agg(
+                Total_Length=pd.NamedAgg(column=col_length, aggfunc='sum'),
+                Total_Scrap=pd.NamedAgg(column=col_scrap, aggfunc='sum'),
+                Coil_Count=pd.NamedAgg(column=col_length, aggfunc='count'),
+            ).reset_index()
+            scrap_detail['Scrap_Rate (%)'] = (
+                scrap_detail['Total_Scrap'] / scrap_detail['Total_Length'] * 100
+            ).round(2)
+            scrap_detail['Sort_Key'] = scrap_detail['Time_Group'].map(time_order_map).fillna(99)
+            scrap_detail = scrap_detail.sort_values(
+                by=['Sort_Key', 'Actual_Thickness', 'HR_Material']
+            ).drop(columns=['Sort_Key'])
+            scrap_detail = scrap_detail[scrap_detail['Total_Length'] > 0]
+
+            # --- Display styled table ---
+            st.dataframe(
+                scrap_detail.style
+                    .background_gradient(subset=['Scrap_Rate (%)'], cmap='Reds')
+                    .format({
+                        'Actual_Thickness': '{:.2f}mm',
+                        'Total_Length': '{:,.1f}',
+                        'Total_Scrap': '{:,.1f}',
+                        'Coil_Count': '{:.0f}',
+                        'Scrap_Rate (%)': '{:.2f}%'
+                    }),
+                use_container_width=True, hide_index=True
+            )
+
+            # --- Grouped bar chart: per period, grouped by thickness ---
+            st.markdown("#### 📊 Scrap Rate by Thickness across Periods")
+            pivot_scrap = scrap_detail.groupby(['Time_Group', 'Actual_Thickness'])['Scrap_Rate (%)'].mean().unstack()
+            pivot_scrap = pivot_scrap.reindex(
+                sorted(pivot_scrap.index, key=lambda x: time_order_map.get(x, 99))
+            )
+
+            fig2, ax2 = plt.subplots(figsize=(12, 5))
+            pivot_scrap.plot(kind='bar', ax=ax2, colormap='YlOrRd', edgecolor='white')
+            ax2.set_title("Avg Scrap Rate (%) by Period & Thickness", fontweight='bold', fontsize=13)
+            ax2.set_xlabel("")
+            ax2.set_ylabel("Scrap Rate (%)")
+            ax2.legend(title="Thickness (mm)", bbox_to_anchor=(1.02, 1), loc='upper left')
+            ax2.tick_params(axis='x', rotation=25)
+            fig2.tight_layout()
+            plt.savefig("export_tab5_scrap_by_thickness.png", bbox_inches='tight', dpi=150)
+            st.pyplot(fig2)
+            plt.close(fig2)
+
+            # --- Grouped bar chart: per period, grouped by material ---
+            st.markdown("#### 🧱 Scrap Rate by Material across Periods")
+            pivot_scrap_mat = scrap_detail.groupby(['Time_Group', 'HR_Material'])['Scrap_Rate (%)'].mean().unstack()
+            pivot_scrap_mat = pivot_scrap_mat.reindex(
+                sorted(pivot_scrap_mat.index, key=lambda x: time_order_map.get(x, 99))
+            )
+
+            fig3, ax3 = plt.subplots(figsize=(12, 5))
+            pivot_scrap_mat.plot(kind='bar', ax=ax3, colormap='Blues', edgecolor='white')
+            ax3.set_title("Avg Scrap Rate (%) by Period & Material", fontweight='bold', fontsize=13)
+            ax3.set_xlabel("")
+            ax3.set_ylabel("Scrap Rate (%)")
+            ax3.legend(title="Material", bbox_to_anchor=(1.02, 1), loc='upper left')
+            ax3.tick_params(axis='x', rotation=25)
+            fig3.tight_layout()
+            plt.savefig("export_tab5_scrap_by_material.png", bbox_inches='tight', dpi=150)
+            st.pyplot(fig3)
+            plt.close(fig3)
+
+            # --- DOWNLOAD ---
+            st.markdown("---")
+            output_scrap = io.BytesIO()
+            try:
+                with pd.ExcelWriter(output_scrap, engine='xlsxwriter') as writer:
+                    scrap_by_period.to_excel(writer, index=False, sheet_name='By_Period')
+                    scrap_detail.to_excel(writer, index=False, sheet_name='By_Period_Thickness_Material')
+                st.download_button(
+                    label="📥 Download Scrap Analysis Excel",
+                    data=output_scrap.getvalue(),
+                    file_name="Scrap_Analysis.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+            except Exception as e:
+                st.warning(f"Could not generate Excel: {e}")
     # =========================================================
     # --- EXPORT PDF SECTION ---
     # =========================================================
