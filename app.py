@@ -384,93 +384,80 @@ if uploaded_file is not None:
         else:
             st.success("✅ Process is completely stable. No severe defect patterns detected to analyze.")
 
-        # --- STEP 3: GLOBAL TIMELINE I-MR CHARTS ---
-        st.markdown("---")
-        st.subheader("Step 3: Continuous Time-Series Tracking (2024 - 2026)")
-        st.warning("X-Axis displays actual Production Dates. Red dots indicate Out-of-Spec violations in specific time periods.")
-
-        # Lọc bỏ dữ liệu trùng lặp "2025 (Full Year)" để dải thời gian vẽ lên biểu đồ không bị lặp lại
-        df_timeline = df_filtered[df_filtered['Time_Group'] != "2025 (Full Year)"].copy()
-        if df_timeline.empty:
-            df_timeline = df_filtered.copy()
-
-        for feat in ['YS', 'TS', 'EL', 'YPE']:
-            if feat in df_timeline.columns:
-                # Sắp xếp dữ liệu theo ngày tháng sản xuất để vẽ Time-series chuẩn xác
-                df_ts = df_timeline.dropna(subset=[feat, '烤三生產日期']).sort_values(by='烤三生產日期').reset_index(drop=True)
-                
-                if len(df_ts) > 1:
-                    st.markdown(f"#### 📈 Production Timeline: **{feat}**")
-                    dates = df_ts['烤三生產日期']
-                    vals = df_ts[feat].values
-                    mean_val = np.mean(vals)
-                    
-                    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 8), gridspec_kw={'height_ratios': [2, 1]})
-                    
-                    # --- I-CHART (VẼ THEO NGÀY THÁNG) ---
-                    ax1.plot(dates, vals, marker='o', ms=3, lw=1, color='#1f77b4', alpha=0.6, label=f'Individual {feat}', zorder=1)
-                    ax1.axhline(mean_val, color='green', ls='--', label='Process Mean')
-                    
-                    # Bắt lỗi vượt Spec
-                    out_dates, out_y = [], []
-                    if feat in GLOBAL_SPECS:
-                        s = GLOBAL_SPECS[feat]
-                        min_s, max_s = s.get('min'), s.get('max')
+        st.markdown(f"### 🛡️ Stability: **{feat}**")
                         
-                        for i, v in enumerate(vals):
-                            if (min_s is not None and v < min_s) or (max_s is not None and v > max_s):
-                                out_dates.append(dates.iloc[i])
-                                out_y.append(v)
+                        # Reset index để đảm bảo dates và vals khớp nhau
+                        valid_data = valid_data.reset_index(drop=True)
+                        dates, vals = valid_data['烤三生產日期'], valid_data[feat].values
+                        
+                        # THUẬT TOÁN ĐÚNG: Dùng mảng số thứ tự (0, 1, 2...) làm trục X thay vì dùng Date
+                        x_seq = np.arange(len(vals)) 
+                        
+                        mean_v = np.mean(vals)
+                        
+                        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 7), gridspec_kw={'height_ratios': [2, 1]})
+                        
+                        # --- I-Chart ---
+                        # Thay dates bằng x_seq
+                        ax1.plot(x_seq, vals, marker='o', ms=4, lw=1, color='#1f77b4', alpha=0.6, label=feat)
+                        ax1.axhline(mean_v, color='green', ls='--', label='Mean')
+                        
+                        if feat in GLOBAL_SPECS:
+                            s = GLOBAL_SPECS[feat]
+                            if s['min']: ax1.axhline(s['min'], color='red', lw=2)
+                            if s['max']: ax1.axhline(s['max'], color='red', lw=2)
+                            
+                            v_x, v_y = [], []
+                            for i, v in enumerate(vals):
+                                if (s['min'] and v < s['min']) or (s['max'] and v > s['max']):
+                                    v_x.append(i); v_y.append(v) # Lưu vị trí i thay vì lưu ngày
+                            if v_x: ax1.scatter(v_x, v_y, color='red', s=60, zorder=5)
+                        
+                        # Vẽ vạch phân tách năm mới (Tìm sự thay đổi năm giữa điểm i và điểm i-1)
+                        for i in range(1, len(dates)):
+                            if dates.iloc[i].year != dates.iloc[i-1].year:
+                                ax1.axvline(i, color='black', ls='-.', alpha=0.3)
+                                ax1.text(i, ax1.get_ylim()[1], f" {dates.iloc[i].year}", fontsize=10, va='top')
 
-                        if min_s: ax1.axhline(min_s, color='red', ls='-', lw=2, label=f"Lower Spec ({min_s})")
-                        if max_s: ax1.axhline(max_s, color='red', ls='-', lw=2, label=f"Upper Spec ({max_s})")
-                        if s.get('target'): ax1.axhline(s['target'], color='black', ls=':', label=f"Target ({s['target']})")
-                        if min_s and max_s: ax1.axhspan(min_s, max_s, color='green', alpha=0.05)
-                    
-                    # Tô đỏ chấm vi phạm theo đúng ngày
-                    if out_dates:
-                        ax1.scatter(out_dates, out_y, color='red', s=50, zorder=5, label='Violation')
+                        ax1.set_title(f"Individual Chart (I) - {feat}", fontweight='bold')
+                        ax1.legend(loc='upper right', fontsize=8)
+                        ax1.set_xticks([]) # Ẩn nhãn trục X của đồ thị trên cho gọn
 
-                    # VẼ VẠCH PHÂN CÁCH CÁC NĂM
-                    for year in dates.dt.year.unique():
-                        year_start = pd.Timestamp(year=year, month=1, day=1)
-                        if year_start >= dates.min():
-                            ax1.axvline(year_start, color='black', linestyle='-.', alpha=0.5)
-                            ax2.axvline(year_start, color='black', linestyle='-.', alpha=0.5)
-                            ax1.text(year_start + pd.Timedelta(days=10), ax1.get_ylim()[1]*0.98, f"Start of {year}", color='black', fontweight='bold', alpha=0.7, va='top', rotation=90)
+                        # --- MR-Chart ---
+                        mr = np.abs(np.diff(vals))
+                        mr_mean = np.mean(mr)
+                        ucl_mr = 3.267 * mr_mean
+                        
+                        # Trục X của MR lùi 1 nhịp (bỏ điểm đầu tiên)
+                        ax2.plot(x_seq[1:], mr, marker='o', ms=3, color='orange', alpha=0.6)
+                        ax2.axhline(mr_mean, color='green', ls='--')
+                        ax2.axhline(ucl_mr, color='red', ls=':')
+                        
+                        hv_x, hv_y = [], []
+                        for i, m_val in enumerate(mr):
+                            if m_val > ucl_mr: hv_x.append(i+1); hv_y.append(m_val)
+                        if hv_x: ax2.scatter(hv_x, hv_y, color='red', s=40, zorder=5)
 
-                    ax1.set_title(f"I-Chart: {feat} (Chronological Timeline)", fontweight='bold')
-                    ax1.legend(loc='upper right', fontsize=8)
-                    ax1.grid(True, linestyle='--', alpha=0.3)
+                        ax2.set_title("Moving Range Chart (MR)", fontweight='bold')
+                        
+                        # --- TRANG TRÍ LẠI TRỤC X BẰNG NGÀY THÁNG ---
+                        # Chỉ hiển thị khoảng 10-15 nhãn ngày để biểu đồ không bị rối chữ
+                        step = max(1, len(x_seq) // 12) 
+                        ax2.set_xticks(x_seq[::step])
+                        ax2.set_xticklabels(dates.dt.strftime('%Y-%m-%d').iloc[::step], rotation=45, ha='right')
 
-                    # --- MR-CHART (VẼ THEO NGÀY THÁNG) ---
-                    mr = np.abs(np.diff(vals))
-                    mr_mean = np.mean(mr)
-                    ucl_mr = 3.267 * mr_mean
-                    mr_dates = dates.iloc[1:] # MR chart bị lùi 1 nhịp so với I-Chart
-                    
-                    ax2.plot(mr_dates, mr, marker='o', ms=3, lw=1, color='orange', alpha=0.6, zorder=1)
-                    ax2.axhline(mr_mean, color='green', ls='--', label='MR Mean')
-                    ax2.axhline(ucl_mr, color='red', ls=':', label=f'UCL ({ucl_mr:.1f})')
-                    
-                    # Tô đỏ điểm MR vượt ngưỡng
-                    v_out_dates, v_out_y = [], []
-                    for i, m_val in enumerate(mr):
-                        if m_val > ucl_mr:
-                            v_out_dates.append(mr_dates.iloc[i])
-                            v_out_y.append(m_val)
-                    if v_out_dates:
-                        ax2.scatter(v_out_dates, v_out_y, color='red', s=40, zorder=5)
-
-                    ax2.set_title("Moving Range (Process Variation)", fontweight='bold')
-                    ax2.legend(loc='upper right', fontsize=8)
-                    ax2.grid(True, linestyle='--', alpha=0.3)
-
-                    # Tự động xoay nghiêng định dạng ngày tháng ở trục X cho dễ đọc
-                    fig.autofmt_xdate()
-                    fig.tight_layout()
-                    st.pyplot(fig); plt.close(fig)
-                    st.markdown("---")
+                        fig.tight_layout()
+                        
+                        # LƯU ẢNH I-MR ĐỂ XUẤT PDF
+                        safe_p_imr = "".join([c if c.isalnum() else "_" for c in sel_p])
+                        plt.savefig(f"export_imr_{feat}.png", bbox_inches='tight', dpi=150)
+                        st.pyplot(fig); plt.close(fig)
+                        
+                        # Insight
+                        if v_x:
+                            st.error(f"⚠️ **Stability Insight:** Found {len(v_x)} out-of-spec points for {feat}.")
+                        else:
+                            st.success(f"✅ **Stability Insight:** {feat} is within specification limits.")
    # --- TAB 4: I-MR CHART (TIMELINE STABILITY) ---
     with tab4:
         st.header("📈 Task 4: I-MR Stability Tracking")
