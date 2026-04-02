@@ -285,13 +285,12 @@ if uploaded_file is not None:
                 if f in df_filtered.columns:
                     good_mean = df_filtered[df_filtered['Good_Qty'] > 0][f].mean()
                     bad_mean = df_filtered[df_filtered['Severe_Bad_Qty'] > 0][f].mean()
-                    # Chỉ tính gap nếu có đủ data cả hàng Good và Bad
                     if pd.notnull(good_mean) and pd.notnull(bad_mean):
                         rc_results[f] = bad_mean - good_mean
 
             rc_s = pd.Series(rc_results).dropna().sort_values(key=abs, ascending=False)
 
-            # --- BƯỚC 4: AUTO CONCLUSION (ĐƯA LÊN ĐẦU ĐỂ SẾP ĐỌC TRƯỚC) ---
+            # --- BƯỚC 4: AUTO CONCLUSION ---
             if not top_issues.empty and not rc_s.empty:
                 top_issue = top_issues.iloc[0]
                 top_driver = rc_s.index[0]
@@ -334,7 +333,7 @@ if uploaded_file is not None:
                     use_container_width=True, hide_index=True
                 )
 
-            # --- BƯỚC 3: DRILL DOWN BẰNG PIVOT TABLE TỰ ĐỘNG ---
+            # --- BƯỚC 3: DRILL DOWN ---
             if not rc_s.empty:
                 st.markdown("---")
                 top_driver = rc_s.index[0]
@@ -355,7 +354,6 @@ if uploaded_file is not None:
                         })
                         
                 drill_df = pd.DataFrame(drill_data).sort_values('Impact Gap', key=abs, ascending=False)
-                
                 st.dataframe(
                     drill_df.style.map(color_gap, subset=['Impact Gap'])
                                   .format({
@@ -384,36 +382,48 @@ if uploaded_file is not None:
         else:
             st.success("✅ Process is completely stable. No severe defect patterns detected to analyze.")
 
-        st.markdown(f"### 🛡️ Stability: **{feat}**")
+        # =====================================================================
+        # TÍCH HỢP BIỂU ĐỒ I-MR CHO TOÀN BỘ DỮ LIỆU LỖI NẶNG (2024-2025) VÀO TAB 3
+        # =====================================================================
+        st.markdown("---")
+        st.header("📈 Global I-MR Stability Tracking (All Periods 2024-2025)")
+        st.info("Chronological view of all severe defects across the entire dataset to identify global trends.")
+
+        # Lọc lấy toàn bộ hàng bị lỗi B+ hoặc B
+        df_severe_global = df_filtered[(df_filtered['B+'] > 0) | (df_filtered['B'] > 0)].sort_values(by='烤三生產日期').reset_index(drop=True)
+
+        if not df_severe_global.empty:
+            for feat in ['YS', 'TS', 'EL', 'YPE']:
+                if feat in df_severe_global.columns:
+                    valid_data = df_severe_global.dropna(subset=[feat, '烤三生產日期']).reset_index(drop=True)
+                    if len(valid_data) > 1:
+                        st.markdown(f"#### 🛡️ Global Stability: **{feat}**")
                         
-                        # Reset index để đảm bảo dates và vals khớp nhau
-                        valid_data = valid_data.reset_index(drop=True)
-                        dates, vals = valid_data['烤三生產日期'], valid_data[feat].values
+                        dates = valid_data['烤三生產日期']
+                        vals = valid_data[feat].values
                         
-                        # THUẬT TOÁN ĐÚNG: Dùng mảng số thứ tự (0, 1, 2...) làm trục X thay vì dùng Date
+                        # Dùng mảng số thứ tự (0, 1, 2...) làm trục X
                         x_seq = np.arange(len(vals)) 
-                        
                         mean_v = np.mean(vals)
                         
                         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 7), gridspec_kw={'height_ratios': [2, 1]})
                         
                         # --- I-Chart ---
-                        # Thay dates bằng x_seq
                         ax1.plot(x_seq, vals, marker='o', ms=4, lw=1, color='#1f77b4', alpha=0.6, label=feat)
                         ax1.axhline(mean_v, color='green', ls='--', label='Mean')
                         
+                        v_x, v_y = [], []
                         if feat in GLOBAL_SPECS:
                             s = GLOBAL_SPECS[feat]
                             if s['min']: ax1.axhline(s['min'], color='red', lw=2)
                             if s['max']: ax1.axhline(s['max'], color='red', lw=2)
                             
-                            v_x, v_y = [], []
                             for i, v in enumerate(vals):
                                 if (s['min'] and v < s['min']) or (s['max'] and v > s['max']):
-                                    v_x.append(i); v_y.append(v) # Lưu vị trí i thay vì lưu ngày
+                                    v_x.append(i); v_y.append(v)
                             if v_x: ax1.scatter(v_x, v_y, color='red', s=60, zorder=5)
                         
-                        # Vẽ vạch phân tách năm mới (Tìm sự thay đổi năm giữa điểm i và điểm i-1)
+                        # Vẽ vạch phân tách năm mới
                         for i in range(1, len(dates)):
                             if dates.iloc[i].year != dates.iloc[i-1].year:
                                 ax1.axvline(i, color='black', ls='-.', alpha=0.3)
@@ -421,14 +431,13 @@ if uploaded_file is not None:
 
                         ax1.set_title(f"Individual Chart (I) - {feat}", fontweight='bold')
                         ax1.legend(loc='upper right', fontsize=8)
-                        ax1.set_xticks([]) # Ẩn nhãn trục X của đồ thị trên cho gọn
+                        ax1.set_xticks([]) 
 
                         # --- MR-Chart ---
                         mr = np.abs(np.diff(vals))
                         mr_mean = np.mean(mr)
                         ucl_mr = 3.267 * mr_mean
                         
-                        # Trục X của MR lùi 1 nhịp (bỏ điểm đầu tiên)
                         ax2.plot(x_seq[1:], mr, marker='o', ms=3, color='orange', alpha=0.6)
                         ax2.axhline(mr_mean, color='green', ls='--')
                         ax2.axhline(ucl_mr, color='red', ls=':')
@@ -440,24 +449,23 @@ if uploaded_file is not None:
 
                         ax2.set_title("Moving Range Chart (MR)", fontweight='bold')
                         
-                        # --- TRANG TRÍ LẠI TRỤC X BẰNG NGÀY THÁNG ---
-                        # Chỉ hiển thị khoảng 10-15 nhãn ngày để biểu đồ không bị rối chữ
+                        # Trang trí lại trục X bằng ngày tháng
                         step = max(1, len(x_seq) // 12) 
                         ax2.set_xticks(x_seq[::step])
                         ax2.set_xticklabels(dates.dt.strftime('%Y-%m-%d').iloc[::step], rotation=45, ha='right')
 
                         fig.tight_layout()
                         
-                        # LƯU ẢNH I-MR ĐỂ XUẤT PDF
-                        safe_p_imr = "".join([c if c.isalnum() else "_" for c in sel_p])
-                        plt.savefig(f"export_imr_{feat}.png", bbox_inches='tight', dpi=150)
+                        # Lưu ảnh I-MR toàn cục (tên file riêng để không đụng hàng với tab 4)
+                        plt.savefig(f"export_imr_global_{feat}.png", bbox_inches='tight', dpi=150)
                         st.pyplot(fig); plt.close(fig)
                         
-                        # Insight
                         if v_x:
-                            st.error(f"⚠️ **Stability Insight:** Found {len(v_x)} out-of-spec points for {feat}.")
+                            st.error(f"⚠️ **Global Insight:** Found {len(v_x)} out-of-spec points for {feat} across the entire period.")
                         else:
-                            st.success(f"✅ **Stability Insight:** {feat} is within specification limits.")
+                            st.success(f"✅ **Global Insight:** {feat} is globally within specification limits.")
+        else:
+            st.warning("No severe defects found across the entire dataset.")
    # --- TAB 4: I-MR CHART (TIMELINE STABILITY) ---
     with tab4:
         st.header("📈 Task 4: I-MR Stability Tracking (Chronological)")
