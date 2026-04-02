@@ -525,22 +525,22 @@ if uploaded_file is not None:
 
 # --- EXPORT SECTION ---
 st.sidebar.header("📥 Export PDF Report")
-st.sidebar.info("💡 Mẹo: Đảm bảo bạn đã lướt qua Tab 3 và Tab 4 để App vẽ xong các biểu đồ trước khi ấn nút xuất PDF nhé.")
+st.sidebar.info("💡 Tip: Make sure to click through Tab 3 and Tab 4 so the app generates all the charts before exporting the PDF.")
 
 if st.sidebar.button("🖨️ Generate PDF Report"):
     try:
-        # Khởi tạo file PDF khổ A4 nằm ngang (Landscape)
+        # Initialize PDF (Landscape A4)
         pdf = FPDF(orientation='L', unit='mm', format='A4')
         pdf.set_auto_page_break(auto=True, margin=15)
         
-        # --- PHẦN 1: HEATMAP DIAGNOSTIC ---
+        # --- PART 1: HEATMAP DIAGNOSTIC ---
         if os.path.exists("export_heatmap.png"):
             pdf.add_page()
             pdf.set_font('Arial', 'B', 16)
             pdf.cell(0, 10, "1. DEFECT HOTSPOT DIAGNOSTIC MAP (SEVERE DEFECTS)", ln=True, align='C')
             pdf.image("export_heatmap.png", x=15, y=25, w=260)
             
-        # --- PHẦN 2: GLOBAL I-MR (TỪ TAB 3) ---
+        # --- PART 2: GLOBAL I-MR (FROM TAB 3) ---
         global_imr_files = [f"export_imr_global_{feat}.png" for feat in ['YS', 'TS', 'EL', 'YPE'] if os.path.exists(f"export_imr_global_{feat}.png")]
         
         if global_imr_files:
@@ -551,7 +551,7 @@ if st.sidebar.button("🖨️ Generate PDF Report"):
             y_pos = 25
             chart_count = 0
             for img_path in global_imr_files:
-                if chart_count == 2: # Cứ dán đủ 2 hình thì lật sang trang mới
+                if chart_count == 2: 
                     pdf.add_page()
                     y_pos = 20
                     chart_count = 0
@@ -559,7 +559,7 @@ if st.sidebar.button("🖨️ Generate PDF Report"):
                 y_pos += 90 
                 chart_count += 1
 
-        # --- PHẦN 3: FILTERED I-MR (TỪ TAB 4) ---
+        # --- PART 3: FILTERED I-MR (FROM TAB 4) ---
         filtered_imr_files = [f"export_imr_{feat}.png" for feat in ['YS', 'TS', 'EL', 'YPE'] if os.path.exists(f"export_imr_{feat}.png")]
         
         if filtered_imr_files:
@@ -578,10 +578,10 @@ if st.sidebar.button("🖨️ Generate PDF Report"):
                 y_pos += 90 
                 chart_count += 1
 
-        # Xuất file PDF
+        # Output PDF
         pdf.output("Quality_Visual_Report.pdf")
         
-        # Tạo nút Download xuất hiện ngay bên dưới
+        # Download Button
         with open("Quality_Visual_Report.pdf", "rb") as f:
             st.sidebar.download_button(
                 label="✅ Click to Download your PDF Report", 
@@ -592,4 +592,4 @@ if st.sidebar.button("🖨️ Generate PDF Report"):
         st.sidebar.success("🎉 PDF Generated Successfully! File is ready to download.")
         
     except Exception as e:
-        st.sidebar.error(f"⚠️ Đã có lỗi xảy ra trong quá trình tạo PDF: {e}")
+        st.sidebar.error(f"⚠️ Error generating PDF: {e}")
