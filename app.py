@@ -65,6 +65,9 @@ if uploaded_file is not None:
     else:
         df['HR_Material'] = 'Unknown'
 
+    # --- TẠO ID DUY NHẤT ĐỂ CHỐNG TRÙNG LẶP (ANTI-DOUBLE COUNTING) ---
+    df['Row_ID'] = np.arange(len(df))
+
     # --- 3. TIME PERIOD LOGIC ---
     def categorize_period(d):
         if pd.isnull(d): return "Unknown"
@@ -100,7 +103,7 @@ if uploaded_file is not None:
     all_periods = sorted(df['Time_Group'].unique())
     ui_selection = st.sidebar.multiselect("📅 Select Period(s):", options=["All"] + all_periods, default=["All"])
     selected_periods = all_periods if ("All" in ui_selection or not ui_selection) else ui_selection
-    df_filtered = df[df['Time_Group'].isin(selected_periods)]
+    df_filtered = df[df['Time_Group'].isin(selected_periods)].copy()
     thickness_list = sorted(df['Actual_Thickness'].dropna().unique())
 
     # --- TAB 1: YIELD SUMMARY ---
@@ -131,7 +134,6 @@ if uploaded_file is not None:
         period_summary['Sort_Key'] = period_summary['Time_Group'].map(time_order_map).fillna(90)
         period_summary = period_summary.sort_values(by=['Sort_Key', 'Actual_Thickness'], ascending=[True, True])
         period_summary = period_summary.drop(columns=['Sort_Key'])
-        
         period_summary.rename(columns={'Severe_Bad_Qty': 'Bad_Qty (B+, B)'}, inplace=True)
 
         if not period_summary.empty:
@@ -145,21 +147,16 @@ if uploaded_file is not None:
                                     }),
                 use_container_width=True, hide_index=True
             )
-        else:
-            st.success("✅ No production data available for the selected filters.")
 
         st.markdown("---")
         st.subheader("📑 Detailed Yield by Period (All Grades)")
         sum_df = df_filtered.groupby(['Time_Group', 'Actual_Thickness', 'HR_Material'], dropna=False)[base_grades].sum().reset_index()
         sum_df['Total_Qty'] = sum_df[base_grades].sum(axis=1)
-        
-        for col in base_grades: 
-            sum_df[f"% {col}"] = ((sum_df[col] / sum_df['Total_Qty'].replace(0, np.nan)) * 100).fillna(0).round(1)
+        for col in base_grades: sum_df[f"% {col}"] = ((sum_df[col] / sum_df['Total_Qty'].replace(0, np.nan)) * 100).fillna(0).round(1)
         
         sum_df['Sort_Key'] = sum_df['Time_Group'].map(time_order_map).fillna(90)
         sum_df = sum_df.sort_values(by=['Sort_Key', 'Actual_Thickness']).drop(columns=['Sort_Key'])
         sum_df.rename(columns={'Time_Group': 'Period', 'Actual_Thickness': 'Thickness'}, inplace=True)
-        
         ordered_periods = sorted(sum_df['Period'].unique(), key=lambda x: time_order_map.get(x, 99))
         
         for period in ordered_periods:
@@ -167,10 +164,32 @@ if uploaded_file is not None:
             if not p_data.empty:
                 st.markdown(f"#### 📅 Period: **{period}**")
                 format_dict = {'Thickness': '{:.2f}', 'Total_Qty': '{:.0f}'}
-                for col in base_grades:
-                    format_dict[col] = '{:.0f}'
-                    format_dict[f"% {col}"] = '{:.1f}%'
+                for col in base_grades: format_dict[col] = '{:.0f}'; format_dict[f"% {col}"] = '{:.1f}%'
                 st.dataframe(p_data.drop(columns=['Period']).style.format(format_dict), use_container_width=True, hide_index=True)
+
+        st.markdown("---")
+        output = io.BytesIO()
+        try:
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                period_summary.to_excel(writer, index=False, sheet_name='Executive_Summary')
+                sum_df.to_excel(writer, index=False, sheet_name='Detailed_Yield')
+                workbook  = writer.book
+                worksheet = writer.sheets['Executive_Summary']
+                header_fmt = workbook.add_format({'bold': True, 'bg_color': '#D7E4BC', 'border': 1, 'align': 'center'})
+                num_fmt = workbook.add_format({'align': 'center', 'border': 1})
+                pct_fmt = workbook.add_format({'num_format': '0.00"%"', 'align': 'center', 'border': 1})
+                for col_num, value in enumerate(period_summary.columns.values):
+                    worksheet.write(0, col_num, value, header_fmt)
+                    worksheet.set_column(col_num, col_num, 15)
+                worksheet.conditional_format(1, 6, len(period_summary), 6, {'type': '2_color_scale', 'min_color': "#F7FCF5", 'max_color': "#41AB5D"})
+                worksheet.conditional_format(1, 7, len(period_summary), 7, {'type': '2_color_scale', 'min_color': "#FFF5F0", 'max_color': "#EF3B2C"})
+                for row in range(1, len(period_summary) + 1):
+                    for col in range(len(period_summary.columns)):
+                        if col >= 6: worksheet.write(row, col, period_summary.iloc[row-1, col]/100 if isinstance(period_summary.iloc[row-1, col], (int, float)) else period_summary.iloc[row-1, col], pct_fmt)
+                        else: worksheet.write(row, col, period_summary.iloc[row-1, col], num_fmt)
+            st.download_button(label="📥 Download Formatted Excel", data=output.getvalue(), file_name="Colored_Yield.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        except:
+            st.download_button(label="📥 Download Basic CSV", data=period_summary.to_csv(index=False).encode('utf-8'), file_name="Yield_Summary.csv", mime="text/csv")
 
     # --- TAB 2: DISTRIBUTION ---
     with tab2:
@@ -240,12 +259,9 @@ if uploaded_file is not None:
     # --- TAB 3: EXECUTIVE AUTO-INSIGHT & ROOT CAUSE ---
     with tab3:
         st.header("🧠 Executive Auto-Insight & Root Cause")
-        st.info("Automated diagnostic engine: Quantifying impact and recommending actions based on severe defects (B+, B).")
+        st.info("Automated diagnostic engine: Quantifying impact based on severe defects (B+, B).")
 
-        severe_grades = ['B+', 'B']
-        df_filtered['Severe_Bad_Qty'] = df_filtered[severe_grades].sum(axis=1)
         df_filtered['Spec_Label'] = df_filtered['Actual_Thickness'].astype(str) + "mm (" + df_filtered['HR_Material'] + ")"
-
         heat_data = df_filtered.groupby(['Spec_Label', 'Time_Group']).apply(
             lambda x: (x['Severe_Bad_Qty'].sum() / x['Total_Qty'].sum() * 100) if x['Total_Qty'].sum() > 0 else 0
         )
@@ -255,19 +271,30 @@ if uploaded_file is not None:
             heatmap_long.columns = ['Spec', 'Period', 'Defect_Rate']
             top_issues = heatmap_long[heatmap_long['Defect_Rate'] > 0].sort_values('Defect_Rate', ascending=False).head(5)
 
-            top_3_specs = top_issues.head(3)['Spec'].tolist()
-            top_3_periods = top_issues.head(3)['Period'].tolist()
+            # --- SỬA LỖI DOUBLE COUNTING (CHỈ ĐẾM MỖI CUỘN 1 LẦN) ---
+            # 1. Lọc chính xác cặp (Spec, Period) cho Top 3
+            top_3_subsets = []
+            for _, row in top_issues.head(3).iterrows():
+                subset = df_filtered[(df_filtered['Spec_Label'] == row['Spec']) & (df_filtered['Time_Group'] == row['Period'])]
+                top_3_subsets.append(subset)
             
-            df_top3 = df_filtered[
-                (df_filtered['Spec_Label'].isin(top_3_specs)) & 
-                (df_filtered['Time_Group'].isin(top_3_periods))
-            ]
+            if top_3_subsets:
+                # XÓA TRÙNG LẶP Row_ID
+                df_top3 = pd.concat(top_3_subsets).drop_duplicates(subset=['Row_ID'])
+            else:
+                df_top3 = pd.DataFrame(columns=df_filtered.columns)
+
+            # 2. Xóa trùng lặp cho dữ liệu gốc (Hàng chuẩn Benchmark)
+            df_unique_global = df_filtered.drop_duplicates(subset=['Row_ID'])
 
             rc_results = {}
             for f in ['YS', 'TS', 'EL', 'YPE']:
                 if f in df_top3.columns:
-                    good_mean_global = df_filtered[df_filtered['Good_Qty'] > 0][f].mean()
+                    # Tính Mean Hàng Tốt chuẩn xác (Mỗi cuộn 1 lần)
+                    good_mean_global = df_unique_global[df_unique_global['Good_Qty'] > 0][f].mean()
+                    # Tính Mean Hàng Lỗi Nặng Top 3 chuẩn xác (Mỗi cuộn 1 lần)
                     bad_mean_top3 = df_top3[df_top3['Severe_Bad_Qty'] > 0][f].mean()
+                    
                     if pd.notnull(good_mean_global) and pd.notnull(bad_mean_top3):
                         rc_results[f] = bad_mean_top3 - good_mean_global
 
@@ -282,44 +309,39 @@ if uploaded_file is not None:
                 st.success(f"""
                 ### 🎯 EXECUTIVE CONCLUSION & ACTION PLAN:
                 * 🚨 **Biggest Hotspot:** Specification **{top_issue['Spec']}** during **{top_issue['Period']}** (Severe Defect Rate hits **{top_issue['Defect_Rate']:.1f}%**).
-                * 🧠 **Main Root Cause Driver:** **{top_driver}** is the primary culprit causing these severe defects.
+                * 🧠 **Main Root Cause Driver:** **{top_driver}** is the primary culprit.
                 * 📊 **Quantified Impact:** Defective coils have a {top_driver} that is on average **{abs(gap_val):.1f} {direction}** than good coils.
-                * 🛠️ **Recommended Action:** Immediate parameter adjustment and SPC audit required for **{top_driver}** control limits on the {top_issue['Spec']} line.
                 """)
 
-            # ĐÃ XÓA PHẦN CODE BỊ LẶP, CHỈ KHAI BÁO CỘT 1 LẦN Ở ĐÂY:
+            # ĐÃ KHAI BÁO CỘT CHUẨN XÁC, KHÔNG CÒN LẶP BẢNG NỮA
             st.markdown("---")
             col1, col2 = st.columns(2)
 
             with col1:
                 st.error("🔥 TOP 5 PROBLEM SEGMENTS (Where to fix)")
                 st.dataframe(
-                    top_issues.style.background_gradient(subset=['Defect_Rate'], cmap='Reds')
-                                    .format({'Defect_Rate': '{:.1f}%'}), 
+                    top_issues.style.background_gradient(subset=['Defect_Rate'], cmap='Reds').format({'Defect_Rate': '{:.1f}%'}), 
                     use_container_width=True, hide_index=True
                 )
 
             with col2:
                 st.warning("🧠 ROOT CAUSE DRIVER (Top 3 Hotspots)")
-                st.info("Analysis: Mean difference of Bad Coils (in Top 3 problem areas) vs. Global Good Coils.")
+                st.info("Analysis: Mean difference of Bad Coils (in Top 3 problem areas) vs. Global Good Coils (Deduplicated).")
                 rc_df = rc_s.reset_index()
                 rc_df.columns = ['Mechanical Feature', 'Impact Gap (Top 3 Bad vs Good)']
                 def color_gap(val):
                     color = '#d62728' if abs(val) > 5 else ('#ff7f0e' if abs(val) > 0 else 'black')
                     return f'color: {color}; font-weight: bold'
-                st.dataframe(
-                    rc_df.style.map(color_gap, subset=['Impact Gap (Top 3 Bad vs Good)'])
-                               .format({'Impact Gap (Top 3 Bad vs Good)': '{:+.2f}'}), 
-                    use_container_width=True, hide_index=True
-                )
+                st.dataframe(rc_df.style.map(color_gap, subset=['Impact Gap (Top 3 Bad vs Good)']).format({'Impact Gap (Top 3 Bad vs Good)': '{:+.2f}'}), use_container_width=True, hide_index=True)
 
             if not rc_s.empty:
                 st.markdown("---")
                 top_driver = rc_s.index[0]
                 st.info(f"📏 DRILL DOWN: {top_driver} Shift by Thickness (Isolating the issue)")
                 drill_data = []
-                for th in df_filtered['Actual_Thickness'].dropna().unique():
-                    th_df = df_filtered[df_filtered['Actual_Thickness'] == th]
+                # Dùng dữ liệu deduplicated cho chuẩn xác
+                for th in df_unique_global['Actual_Thickness'].dropna().unique():
+                    th_df = df_unique_global[df_unique_global['Actual_Thickness'] == th]
                     g_val = th_df[th_df['Good_Qty'] > 0][top_driver].mean()
                     b_val = th_df[th_df['Severe_Bad_Qty'] > 0][top_driver].mean()
                     if pd.notnull(g_val) or pd.notnull(b_val):
@@ -328,11 +350,7 @@ if uploaded_file is not None:
                             'Impact Gap': (b_val - g_val) if (pd.notnull(g_val) and pd.notnull(b_val)) else None
                         })
                 drill_df = pd.DataFrame(drill_data).sort_values('Impact Gap', key=abs, ascending=False)
-                st.dataframe(
-                    drill_df.style.map(color_gap, subset=['Impact Gap']).format({
-                        'Thickness': '{:.2f}mm', 'GOOD Coils (Mean)': '{:.1f}', 'BAD Coils (Mean)': '{:.1f}', 'Impact Gap': '{:+.1f}'
-                    }), use_container_width=True, hide_index=True
-                )
+                st.dataframe(drill_df.style.map(color_gap, subset=['Impact Gap']).format({'Thickness': '{:.2f}mm', 'GOOD Coils (Mean)': '{:.1f}', 'BAD Coils (Mean)': '{:.1f}', 'Impact Gap': '{:+.1f}'}), use_container_width=True, hide_index=True)
                 
             st.markdown("---")
             st.subheader("🗺️ Evidence: Visual Hotspot Map (Grades B+ and Below)")
@@ -351,7 +369,8 @@ if uploaded_file is not None:
 
         st.markdown("---")
         st.header("📈 Global I-MR Stability Tracking (Severe Defects: B+ and Below)")
-        df_severe_global = df_filtered[(df_filtered['B+'] > 0) | (df_filtered['B'] > 0)].sort_values(by='烤三生產日期').reset_index(drop=True)
+        # SỬ DỤNG DỮ LIỆU ĐÃ XÓA TRÙNG CHO BIỂU ĐỒ GLOBAL
+        df_severe_global = df_unique_global[(df_unique_global['B+'] > 0) | (df_unique_global['B'] > 0)].sort_values(by='烤三生產日期').reset_index(drop=True)
 
         if not df_severe_global.empty:
             for feat in ['YS', 'TS', 'EL', 'YPE']:
@@ -372,8 +391,8 @@ if uploaded_file is not None:
                         v_x, v_y = [], []
                         if feat in GLOBAL_SPECS:
                             s = GLOBAL_SPECS[feat]
-                            if s['min']: ax1.axhline(s['min'], color='red', lw=2, label=f"Min: {s['min']}")
-                            if s['max']: ax1.axhline(s['max'], color='red', lw=2, label=f"Max: {s['max']}")
+                            if s['min']: ax1.axhline(s['min'], color='red', lw=2); ax1.text(x_seq[-1], s['min'], f" Min: {s['min']}", va='bottom', color='red', fontweight='bold')
+                            if s['max']: ax1.axhline(s['max'], color='red', lw=2); ax1.text(x_seq[-1], s['max'], f" Max: {s['max']}", va='bottom', color='red', fontweight='bold')
                             for i, v in enumerate(vals):
                                 if (s['min'] and v < s['min']) or (s['max'] and v > s['max']):
                                     v_x.append(i); v_y.append(v)
@@ -418,13 +437,6 @@ if uploaded_file is not None:
 
         @st.fragment
         def render_tab4():
-            GLOBAL_SPECS = {
-                'YS': {'min': 400, 'max': 460, 'target': 430},
-                'TS': {'min': 410, 'max': 470, 'target': 440},
-                'EL': {'min': 25, 'max': None, 'target': None},
-                'YPE': {'min': 4, 'max': None, 'target': None}
-            }
-
             imr_periods = ["All Periods"] + sorted(df_filtered['Time_Group'].dropna().unique().tolist())
             imr_thicks = sorted(df_filtered['Actual_Thickness'].dropna().unique())
             imr_mats = sorted(df_filtered['HR_Material'].astype(str).unique())
@@ -438,6 +450,10 @@ if uploaded_file is not None:
                 imr_df = df_filtered[(df_filtered['Actual_Thickness'] == sel_t) & (df_filtered['HR_Material'] == sel_m)]
             else:
                 imr_df = df_filtered[(df_filtered['Time_Group'] == sel_p) & (df_filtered['Actual_Thickness'] == sel_t) & (df_filtered['HR_Material'] == sel_m)]
+
+            # SỬA LOGIC: Nếu xem All Periods thì xóa dòng đếm trùng đi cho chuẩn biểu đồ thời gian
+            if sel_p == "All Periods":
+                imr_df = imr_df.drop_duplicates(subset=['Row_ID'])
 
             imr_df = imr_df.sort_values(by='烤三生產日期').reset_index(drop=True)
 
@@ -500,7 +516,6 @@ if uploaded_file is not None:
                             ax2.set_xticklabels(dates.dt.strftime('%Y-%m-%d').iloc[::step], rotation=45, ha='right')
 
                             fig.tight_layout()
-                            safe_p_imr = "".join([c if c.isalnum() else "_" for c in sel_p])
                             plt.savefig(f"export_imr_{feat}.png", bbox_inches='tight', dpi=150)
                             st.pyplot(fig); plt.close(fig)
             else:
