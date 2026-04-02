@@ -240,7 +240,7 @@ if uploaded_file is not None:
         grade_dist_display.index.name = 'Time Period'
         grade_dist_display['_sort'] = grade_dist_display.index.map(lambda x: time_order_map.get(x, 99))
         grade_dist_display = grade_dist_display.sort_values('_sort').drop(columns=['_sort'])
-        grade_dist_pct = grade_dist_display.applymap(lambda x: f"{x:.1f}%")
+        grade_dist_pct = grade_dist_display.map(lambda x: f"{x:.1f}%")
 
         header_color = "#1a3a5c"
         alt_row_color = "#dce6f1"
