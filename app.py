@@ -106,39 +106,45 @@ if uploaded_file is not None:
     # --- TAB 1: YIELD SUMMARY ---
     with tab1:
         st.header("1. Quality Yield Summary & Worst Offenders")
-        st.info("Overview of production yield. Sorted to show the highest risk specifications first.")
+        st.info("Overview of production yield. Sorted to show the highest risk specifications first (Severe Defects: B+ and B).")
 
-        # --- EXECUTIVE SUMMARY: CHI TIẾT THỜI GIAN + ĐỘ DÀY + VẬT LIỆU ---
-        st.subheader("📊 Executive Summary: Top Defect Contributors")
+        # --- EXECUTIVE SUMMARY: CHỈ TÍNH LỖI NẶNG (B+ TRỞ XUỐNG) ---
+        st.subheader("📊 Executive Summary: Top Defect Contributors (B+, B)")
         
-        # Gom nhóm theo cả Thời gian, Độ dày và Vật liệu
-        period_summary = df_filtered.groupby(['Time_Group', 'Actual_Thickness', 'HR_Material'])[['Total_Qty', 'Good_Qty', 'Bad_Qty']].sum().reset_index()
+        # Tạo cột tính riêng tổng số lượng lỗi nặng
+        severe_grades = ['B+', 'B']
+        df_filtered['Severe_Bad_Qty'] = df_filtered[severe_grades].sum(axis=1)
+        
+        # Gom nhóm theo Thời gian, Độ dày và Vật liệu
+        period_summary = df_filtered.groupby(['Time_Group', 'Actual_Thickness', 'HR_Material'])[['Total_Qty', 'Good_Qty', 'Severe_Bad_Qty']].sum().reset_index()
         
         # Lọc bỏ các dòng không có dữ liệu sản xuất
         period_summary = period_summary[period_summary['Total_Qty'] > 0]
         
-        # Tính tỷ lệ % chuẩn xác
+        # Tính tỷ lệ % chuẩn xác dựa trên lỗi nặng
         period_summary['Yield (%)'] = (period_summary['Good_Qty'] / period_summary['Total_Qty'] * 100).fillna(0).round(2)
-        period_summary['Defect_Rate (%)'] = (period_summary['Bad_Qty'] / period_summary['Total_Qty'] * 100).fillna(0).round(2)
+        period_summary['Defect_Rate (%)'] = (period_summary['Severe_Bad_Qty'] / period_summary['Total_Qty'] * 100).fillna(0).round(2)
         
-        # SẮP XẾP TỶ LỆ LỖI GIẢM DẦN (Đẩy lỗi nặng nhất lên đầu bảng)
-        period_summary = period_summary.sort_values(by=['Defect_Rate (%)', 'Bad_Qty'], ascending=[False, False])
+        # SẮP XẾP TỶ LỆ LỖI GIẢM DẦN
+        period_summary = period_summary.sort_values(by=['Defect_Rate (%)', 'Severe_Bad_Qty'], ascending=[False, False])
+        
+        # Đổi tên cột cho rõ nghĩa trên bảng hiển thị
+        period_summary.rename(columns={'Severe_Bad_Qty': 'Bad_Qty (B+, B)'}, inplace=True)
 
-        if not period_summary.empty and period_summary['Bad_Qty'].sum() > 0:
-            # Tự động đọc tên "Thủ phạm" số 1 để báo cáo Sếp
+        if not period_summary.empty and period_summary['Bad_Qty (B+, B)'].sum() > 0:
             worst_row = period_summary.iloc[0]
             
-            st.error(f"⚠️ **Executive Insight:** The highest risk item is **{worst_row['Actual_Thickness']}mm ({worst_row['HR_Material']})** during **{worst_row['Time_Group']}**, hitting a defect rate of **{worst_row['Defect_Rate (%)']}%** ({worst_row['Bad_Qty']} defective coils).")
+            st.error(f"⚠️ **Executive Insight:** The highest risk item is **{worst_row['Actual_Thickness']:.2f}mm ({worst_row['HR_Material']})** during **{worst_row['Time_Group']}**, hitting a severe defect rate of **{worst_row['Defect_Rate (%)']:.2f}%** ({worst_row['Bad_Qty (B+, B)']:.0f} defective coils).")
             
-            # Hiển thị bảng với màu sắc Gradient nổi bật (ĐÃ FORMAT BỎ SỐ 0 THẬP PHÂN)
+            # Hiển thị bảng với format loại bỏ số 0 thập phân dư thừa
             st.dataframe(
                 period_summary.style.background_gradient(subset=['Defect_Rate (%)'], cmap='Reds')
                                     .background_gradient(subset=['Yield (%)'], cmap='Greens')
                                     .format({
-                                        'Actual_Thickness': '{:.2f}', # Hiển thị độ dày gọn gàng (VD: 0.75, 0.60)
-                                        'Total_Qty': '{:.0f}',        # Chuyển thành số nguyên (VD: 2)
-                                        'Good_Qty': '{:.0f}',         # Chuyển thành số nguyên (VD: 0)
-                                        'Bad_Qty': '{:.0f}',          # Chuyển thành số nguyên (VD: 2)
+                                        'Actual_Thickness': '{:.2f}', 
+                                        'Total_Qty': '{:.0f}',        
+                                        'Good_Qty': '{:.0f}',         
+                                        'Bad_Qty (B+, B)': '{:.0f}',          
                                         'Yield (%)': '{:.2f}%', 
                                         'Defect_Rate (%)': '{:.2f}%'
                                     }),
@@ -146,13 +152,13 @@ if uploaded_file is not None:
                 hide_index=True
             )
         else:
-            st.success("✅ **Executive Insight:** Production is running smoothly with no significant defects.")
+            st.success("✅ **Executive Insight:** Production is running smoothly with no severe defects (B+, B).")
             st.dataframe(period_summary, use_container_width=True, hide_index=True)
 
         st.markdown("---")
 
         # --- DETAILED YIELD BY PERIOD ---
-        st.subheader("📑 Detailed Yield by Period")
+        st.subheader("📑 Detailed Yield by Period (All Grades)")
         sum_df = df_filtered.groupby(['Time_Group', 'Actual_Thickness', 'HR_Material'], dropna=False)[base_grades].sum().reset_index()
         sum_df['Total_Qty'] = sum_df[base_grades].sum(axis=1)
         
@@ -165,7 +171,15 @@ if uploaded_file is not None:
             p_data = sum_df[sum_df['Period'] == period]
             if not p_data.empty:
                 st.markdown(f"#### 📅 Period: **{period}**")
-                st.dataframe(p_data.drop(columns=['Period']), use_container_width=True, hide_index=True)
+                st.dataframe(
+                    p_data.drop(columns=['Period']).style.format({
+                        'Thickness': '{:.2f}', 
+                        'Total_Qty': '{:.0f}',
+                        **{col: '{:.0f}' for col in base_grades}
+                    }), 
+                    use_container_width=True, 
+                    hide_index=True
+                )
 
         # --- XUẤT EXCEL ---
         st.markdown("---")
