@@ -300,7 +300,7 @@ if uploaded_file is not None:
                 st.success(f"""
                 ### 🎯 EXECUTIVE CONCLUSION & ACTION PLAN:
                 
-                * 🚨 **Biggest Hotspot:** Specification **{top_issue['Spec']}** during **{top_issue['Period']}** (Defect Rate hits **{top_issue['Defect_Rate']:.1f}%**).
+                * 🚨 **Biggest Hotspot:** Specification **{top_issue['Spec']}** during **{top_issue['Period']}** (Severe Defect Rate hits **{top_issue['Defect_Rate']:.1f}%**).
                 * 🧠 **Main Root Cause Driver:** **{top_driver}** is the primary culprit causing these severe defects.
                 * 📊 **Quantified Impact:** Defective coils have a {top_driver} that is on average **{abs(gap_val):.1f} {direction}** than good coils.
                 * 🛠️ **Recommended Action:** Immediate parameter adjustment and SPC audit required for **{top_driver}** control limits on the {top_issue['Spec']} line.
@@ -367,7 +367,7 @@ if uploaded_file is not None:
                 
             # Đẩy cái Heatmap hình ảnh xuống dưới cùng để làm "Bằng chứng" (Evidence)
             st.markdown("---")
-            st.subheader("🗺️ Evidence: Visual Hotspot Map")
+            st.subheader("🗺️ Evidence: Visual Hotspot Map (Grades B+ and Below)")
             heat_pivot = heat_data.unstack()
             fig, ax = plt.subplots(figsize=(12, 5))
             vmax_threshold = 30.0 if heat_pivot.max().max() > 30 else heat_pivot.max().max()
@@ -386,7 +386,7 @@ if uploaded_file is not None:
         # TÍCH HỢP BIỂU ĐỒ I-MR CHO TOÀN BỘ DỮ LIỆU LỖI NẶNG (2024-2025) VÀO TAB 3
         # =====================================================================
         st.markdown("---")
-        st.header("📈 Global I-MR Stability Tracking (All Periods 2024-2025)")
+        st.header("📈 Global I-MR Stability Tracking (Severe Defects: B+ and Below)")
         st.info("Chronological view of all severe defects across the entire dataset to identify global trends.")
 
         # Lọc lấy toàn bộ hàng bị lỗi B+ hoặc B
@@ -397,7 +397,7 @@ if uploaded_file is not None:
                 if feat in df_severe_global.columns:
                     valid_data = df_severe_global.dropna(subset=[feat, '烤三生產日期']).reset_index(drop=True)
                     if len(valid_data) > 1:
-                        st.markdown(f"#### 🛡️ Global Stability: **{feat}**")
+                        st.markdown(f"#### 🛡️ Global Stability: **{feat}** (Grades B+ and Below)")
                         
                         dates = valid_data['烤三生產日期']
                         vals = valid_data[feat].values
@@ -406,22 +406,33 @@ if uploaded_file is not None:
                         x_seq = np.arange(len(vals)) 
                         mean_v = np.mean(vals)
                         
-                        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 7), gridspec_kw={'height_ratios': [2, 1]})
+                        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 8), gridspec_kw={'height_ratios': [2, 1]})
                         
                         # --- I-Chart ---
-                        ax1.plot(x_seq, vals, marker='o', ms=4, lw=1, color='#1f77b4', alpha=0.6, label=feat)
-                        ax1.axhline(mean_v, color='green', ls='--', label='Mean')
+                        ax1.plot(x_seq, vals, marker='o', ms=4, lw=1, color='#1f77b4', alpha=0.6, label=f"Value ({feat})")
+                        
+                        # Hiển thị số Mean
+                        ax1.axhline(mean_v, color='green', ls='--', label=f'Mean: {mean_v:.1f}')
+                        ax1.text(x_seq[-1], mean_v, f" Mean: {mean_v:.1f}", va='bottom', color='green', fontweight='bold')
                         
                         v_x, v_y = [], []
                         if feat in GLOBAL_SPECS:
                             s = GLOBAL_SPECS[feat]
-                            if s['min']: ax1.axhline(s['min'], color='red', lw=2)
-                            if s['max']: ax1.axhline(s['max'], color='red', lw=2)
+                            
+                            # Hiển thị số Min (LSL)
+                            if s['min']: 
+                                ax1.axhline(s['min'], color='red', lw=2, label=f"Min: {s['min']}")
+                                ax1.text(x_seq[-1], s['min'], f" Min: {s['min']}", va='bottom', color='red', fontweight='bold')
+                            
+                            # Hiển thị số Max (USL)
+                            if s['max']: 
+                                ax1.axhline(s['max'], color='red', lw=2, label=f"Max: {s['max']}")
+                                ax1.text(x_seq[-1], s['max'], f" Max: {s['max']}", va='bottom', color='red', fontweight='bold')
                             
                             for i, v in enumerate(vals):
                                 if (s['min'] and v < s['min']) or (s['max'] and v > s['max']):
                                     v_x.append(i); v_y.append(v)
-                            if v_x: ax1.scatter(v_x, v_y, color='red', s=60, zorder=5)
+                            if v_x: ax1.scatter(v_x, v_y, color='red', s=60, zorder=5, label='Out of Spec')
                         
                         # Vẽ vạch phân tách năm mới
                         for i in range(1, len(dates)):
@@ -429,8 +440,9 @@ if uploaded_file is not None:
                                 ax1.axvline(i, color='black', ls='-.', alpha=0.3)
                                 ax1.text(i, ax1.get_ylim()[1], f" {dates.iloc[i].year}", fontsize=10, va='top')
 
-                        ax1.set_title(f"Individual Chart (I) - {feat}", fontweight='bold')
-                        ax1.legend(loc='upper right', fontsize=8)
+                        ax1.set_title(f"Individual Chart (I) - {feat} (Severe Defects: B+, B)", fontweight='bold')
+                        # Hiển thị Legend ở góc phải bên ngoài để không che biểu đồ
+                        ax1.legend(loc='upper right', fontsize=9, bbox_to_anchor=(1.15, 1))
                         ax1.set_xticks([]) 
 
                         # --- MR-Chart ---
@@ -438,16 +450,22 @@ if uploaded_file is not None:
                         mr_mean = np.mean(mr)
                         ucl_mr = 3.267 * mr_mean
                         
-                        ax2.plot(x_seq[1:], mr, marker='o', ms=3, color='orange', alpha=0.6)
-                        ax2.axhline(mr_mean, color='green', ls='--')
-                        ax2.axhline(ucl_mr, color='red', ls=':')
+                        ax2.plot(x_seq[1:], mr, marker='o', ms=3, color='orange', alpha=0.6, label="Moving Range")
+                        
+                        # Hiển thị số MR Mean và UCL
+                        ax2.axhline(mr_mean, color='green', ls='--', label=f'MR Mean: {mr_mean:.1f}')
+                        ax2.text(x_seq[-1], mr_mean, f" Mean: {mr_mean:.1f}", va='bottom', color='green', fontweight='bold')
+                        
+                        ax2.axhline(ucl_mr, color='red', ls=':', label=f'UCL: {ucl_mr:.1f}')
+                        ax2.text(x_seq[-1], ucl_mr, f" UCL: {ucl_mr:.1f}", va='bottom', color='red', fontweight='bold')
                         
                         hv_x, hv_y = [], []
                         for i, m_val in enumerate(mr):
                             if m_val > ucl_mr: hv_x.append(i+1); hv_y.append(m_val)
                         if hv_x: ax2.scatter(hv_x, hv_y, color='red', s=40, zorder=5)
 
-                        ax2.set_title("Moving Range Chart (MR)", fontweight='bold')
+                        ax2.set_title(f"Moving Range Chart (MR) - {feat} (Severe Defects: B+, B)", fontweight='bold')
+                        ax2.legend(loc='upper right', fontsize=9, bbox_to_anchor=(1.15, 1))
                         
                         # Trang trí lại trục X bằng ngày tháng
                         step = max(1, len(x_seq) // 12) 
