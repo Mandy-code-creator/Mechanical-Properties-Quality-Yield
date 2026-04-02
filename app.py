@@ -160,7 +160,7 @@ if uploaded_file is not None:
 
         st.markdown("---")
 
-        # --- DETAILED YIELD BY PERIOD ---
+       # --- DETAILED YIELD BY PERIOD ---
         st.subheader("📑 Detailed Yield by Period (All Grades)")
         sum_df = df_filtered.groupby(['Time_Group', 'Actual_Thickness', 'HR_Material'], dropna=False)[base_grades].sum().reset_index()
         sum_df['Total_Qty'] = sum_df[base_grades].sum(axis=1)
@@ -174,16 +174,18 @@ if uploaded_file is not None:
             p_data = sum_df[sum_df['Period'] == period]
             if not p_data.empty:
                 st.markdown(f"#### 📅 Period: **{period}**")
+                
+                # --- TẠO FORMAT CHUẨN CHO TỪNG CỘT TẠI ĐÂY ---
+                format_dict = {'Thickness': '{:.2f}', 'Total_Qty': '{:.0f}'}
+                for col in base_grades:
+                    format_dict[col] = '{:.0f}'          # Cột số lượng: Không lấy số thập phân
+                    format_dict[f"% {col}"] = '{:.1f}%'  # Cột phần trăm: Lấy 1 số thập phân + dấu %
+                
                 st.dataframe(
-                    p_data.drop(columns=['Period']).style.format({
-                        'Thickness': '{:.2f}', 
-                        'Total_Qty': '{:.0f}',
-                        **{col: '{:.0f}' for col in base_grades}
-                    }), 
+                    p_data.drop(columns=['Period']).style.format(format_dict), 
                     use_container_width=True, 
                     hide_index=True
                 )
-
         # --- XUẤT EXCEL ---
         st.markdown("---")
         output = io.BytesIO()
