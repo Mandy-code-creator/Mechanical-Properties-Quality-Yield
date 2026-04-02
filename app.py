@@ -103,7 +103,7 @@ if uploaded_file is not None:
     }
 
     # --- TABS ---
-    tab0, tab1, tab2, tab3, tab4 = st.tabs([
+    tab0, tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "0. Raw Check",
         "1. Yield Summary",
         "2. Distribution Analysis",
