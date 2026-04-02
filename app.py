@@ -123,7 +123,7 @@ if uploaded_file is not None:
     df_filtered = df[df['Time_Group'].isin(selected_periods)].copy()
     thickness_list = sorted(df['Actual_Thickness'].dropna().unique())
 
-    # --- TAB 1: YIELD SUMMARY ---
+# --- TAB 1: YIELD SUMMARY ---
     with tab1:
         st.header("1. Quality Yield Summary & Worst Offenders")
         st.info("Overview of production yield. Chronologically sorted from 2024 onwards.")
@@ -157,7 +157,7 @@ if uploaded_file is not None:
                 use_container_width=True, hide_index=True
             )
 
-            # --- SAVE Tab1 Summary Bar Chart for PDF ---
+            # --- SAVE Tab1 Defect Rate Bar Chart for PDF ---
             fig_s, ax_s = plt.subplots(figsize=(13, 5))
             pivot_data = period_summary.pivot_table(
                 index='Time_Group', columns='Actual_Thickness',
@@ -226,11 +226,90 @@ if uploaded_file is not None:
                 )
 
         st.markdown("---")
+
+        # --- GRADE DISTRIBUTION SUMMARY TABLE ---
+        st.subheader("📊 Grade Distribution by Time Period (%)")
+
+        grade_dist = df_filtered.groupby('Time_Group')[base_grades].sum()
+        grade_dist['Total'] = grade_dist.sum(axis=1)
+        for g in base_grades:
+            grade_dist[f'pct_{g}'] = (grade_dist[g] / grade_dist['Total'].replace(0, np.nan) * 100).fillna(0).round(1)
+
+        grade_dist_display = grade_dist[[f'pct_{g}' for g in base_grades]].copy()
+        grade_dist_display.columns = base_grades
+        grade_dist_display.index.name = 'Time Period'
+        grade_dist_display['_sort'] = grade_dist_display.index.map(lambda x: time_order_map.get(x, 99))
+        grade_dist_display = grade_dist_display.sort_values('_sort').drop(columns=['_sort'])
+        grade_dist_pct = grade_dist_display.applymap(lambda x: f"{x:.1f}%")
+
+        header_color = "#1a3a5c"
+        alt_row_color = "#dce6f1"
+
+        html = f"""
+        <style>
+        .grade-table {{
+            width: 100%;
+            border-collapse: collapse;
+            font-family: sans-serif;
+            font-size: 14px;
+            margin-bottom: 24px;
+        }}
+        .grade-table th {{
+            background-color: {header_color};
+            color: white;
+            padding: 10px 16px;
+            text-align: center;
+        }}
+        .grade-table td {{
+            padding: 9px 16px;
+            text-align: center;
+            border-bottom: 1px solid #ccc;
+        }}
+        .grade-table tr:nth-child(odd) td {{
+            background-color: {alt_row_color};
+        }}
+        .grade-table tr:nth-child(even) td {{
+            background-color: #ffffff;
+        }}
+        .grade-table tr:hover td {{
+            background-color: #b8cce4;
+        }}
+        </style>
+        <table class="grade-table">
+            <thead>
+                <tr>
+                    <th>Time Period</th>
+                    {''.join(f'<th>{g}</th>' for g in base_grades)}
+                </tr>
+            </thead>
+            <tbody>
+        """
+
+        for period, row in grade_dist_pct.iterrows():
+            html += "<tr>"
+            html += f"<td><b>{period}</b></td>"
+            for g in base_grades:
+                val = float(row[g].replace('%', ''))
+                if g in ['B+', 'B'] and val > 1.0:
+                    html += f'<td style="color:#c00000;font-weight:bold">{row[g]}</td>'
+                elif g in ['A-B+', 'A-B'] and val > 30.0:
+                    html += f'<td style="color:#2e7d32;font-weight:bold">{row[g]}</td>'
+                else:
+                    html += f'<td>{row[g]}</td>'
+            html += "</tr>"
+
+        html += "</tbody></table>"
+        st.markdown(html, unsafe_allow_html=True)
+
+        st.markdown("---")
+
+        # --- DOWNLOAD EXCEL ---
         output = io.BytesIO()
         try:
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                 period_summary.to_excel(writer, index=False, sheet_name='Executive_Summary')
                 sum_df.to_excel(writer, index=False, sheet_name='Detailed_Yield')
+                grade_dist_display.to_excel(writer, sheet_name='Grade_Distribution_%')
                 workbook = writer.book
                 worksheet = writer.sheets['Executive_Summary']
                 header_fmt = workbook.add_format({'bold': True, 'bg_color': '#D7E4BC', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
@@ -261,7 +340,6 @@ if uploaded_file is not None:
                 file_name="Yield_Summary.csv",
                 mime="text/csv"
             )
-
     # --- TAB 2: DISTRIBUTION ---
     with tab2:
         global_x_bounds = {}
