@@ -625,6 +625,7 @@ if uploaded_file is not None:
  
         # ----------------------------------------------------------
         # ----------------------------------------------------------
+       # ----------------------------------------------------------
         # Cross-period Capability Summary Table (pinned at top)
         # ----------------------------------------------------------
         if cap_summary_rows:
@@ -638,45 +639,147 @@ if uploaded_file is not None:
             cap_df = pd.DataFrame(cap_summary_rows)
 
             # ==========================================================
-            # MỚI: BẢNG PIVOT SO SÁNH CHÉO XU HƯỚNG QUA CÁC THỜI KỲ
+            # BẢNG TỔNG HỢP SO SÁNH CHÉO (GỘP CHUNG CP, CPK, CA)
             # ==========================================================
-            st.markdown("### 🔄 Cross-Period Comparison (Trend Analysis)")
-            tab_cpk, tab_cp, tab_ca = st.tabs(["🏆 Cpk Trend", "📏 Cp Trend", "🎯 Ca (%) Trend"])
-
-            def make_pivot(df, val_col):
-                # Tạo bảng chéo: Hàng là Cơ tính (TS, YS...), Cột là Thời gian
-                pivot = df.pivot(index='Feature', columns='Period / Segment', values=val_col)
-                # Giữ đúng thứ tự các móc thời gian đã chọn trên Sidebar
-                ordered_cols = [p for p in selected_periods if p in pivot.columns]
-                return pivot[ordered_cols]
-
-            with tab_cpk:
-                pivot_cpk = make_pivot(cap_df, 'Cpk')
-                def color_cpk_pivot(val):
-                    if pd.isna(val): return ''
-                    if val >= 1.67: return 'background-color: #2e7d32; color: white; font-weight: bold;'
-                    if val >= 1.33: return 'background-color: #66bb6a; color: white; font-weight: bold;'
-                    if val >= 1.00: return 'background-color: #ffa726; color: black; font-weight: bold;'
-                    return 'background-color: #d62728; color: white; font-weight: bold;'
+            st.markdown("### 🔄 Cross-Period Comparison (Cpk, Cp, Ca Trend)")
+            
+            trend_data = []
+            for p in selected_periods:
+                if p not in cap_df['Period / Segment'].values: continue
+                row = {'Period': p}
+                for feat in ['YS', 'TS', 'EL', 'YPE']:
+                    df_fp = cap_df[(cap_df['Period / Segment'] == p) & (cap_df['Feature'] == feat)]
+                    if not df_fp.empty:
+                        row[f"{feat} Cpk"] = df_fp.iloc[0]['Cpk']
+                        row[f"{feat} Cp"] = df_fp.iloc[0]['Cp']
+                        row[f"{feat} Ca (%)"] = df_fp.iloc[0]['Ca (%)']
+                if len(row) > 1:
+                    trend_data.append(row)
+                    
+            if trend_data:
+                trend_df = pd.DataFrame(trend_data).set_index('Period')
                 
-                st.dataframe(pivot_cpk.style.map(color_cpk_pivot).format("{:.3f}", na_rep="—"), use_container_width=True)
-
-            with tab_cp:
-                pivot_cp = make_pivot(cap_df, 'Cp')
-                st.dataframe(pivot_cp.style.background_gradient(cmap='RdYlGn', vmin=0.67, vmax=2.0).format("{:.3f}", na_rep="—"), use_container_width=True)
-
-            with tab_ca:
-                pivot_ca = make_pivot(cap_df, 'Ca (%)')
-                def color_ca_pivot(val):
-                    if pd.isna(val): return ''
-                    av = abs(val)
-                    if av <= 12.5: return 'color: #2e7d32; font-weight: bold;'
-                    if av <= 25.0: return 'color: #ffa726; font-weight: bold;'
-                    return 'color: #d62728; font-weight: bold;'
+                # Hàm tô màu tự động cho toàn bộ bảng
+                def style_trend_table(df):
+                    styles = pd.DataFrame('', index=df.index, columns=df.columns)
+                    for r_idx in df.index:
+                        for c in df.columns:
+                            val = df.at[r_idx, c]
+                            if pd.isna(val): continue
+                            
+                            # Tô nền cho Cpk (Quan trọng nhất)
+                            if "Cpk" in c:
+                                if val >= 1.67: styles.at[r_idx, c] = 'background-color: #2e7d32; color: white; font-weight: bold;'
+                                elif val >= 1.33: styles.at[r_idx, c] = 'background-color: #66bb6a; color: white; font-weight: bold;'
+                                elif val >= 1.00: styles.at[r_idx, c] = 'background-color: #ffa726; color: black; font-weight: bold;'
+                                else: styles.at[r_idx, c] = 'background-color: #d62728; color: white; font-weight: bold;'
+                            
+                            # Tô chữ cho Cp
+                            elif "Cp" in c:
+                                if val >= 1.67: styles.at[r_idx, c] = 'color: #2e7d32; font-weight: bold;'
+                                elif val >= 1.33: styles.at[r_idx, c] = 'color: #66bb6a; font-weight: bold;'
+                                elif val >= 1.00: styles.at[r_idx, c] = 'color: #ffa726; font-weight: bold;'
+                                else: styles.at[r_idx, c] = 'color: #d62728; font-weight: bold;'
+                            
+                            # Tô chữ cho Ca (%)
+                            elif "Ca" in c:
+                                av = abs(val)
+                                if av <= 12.5: styles.at[r_idx, c] = 'color: #2e7d32; font-weight: bold;'
+                                elif av <= 25.0: styles.at[r_idx, c] = 'color: #ffa726; font-weight: bold;'
+                                else: styles.at[r_idx, c] = 'color: #d62728; font-weight: bold;'
+                                
+                    return styles
                 
-                st.dataframe(pivot_ca.style.map(color_ca_pivot).format("{:.1f}%", na_rep="—"), use_container_width=True)
+                # Format số thập phân
+                format_dict = {c: "{:.1f}%" if "Ca" in c else "{:.3f}" for c in trend_df.columns}
+                styled_trend = trend_df.style.apply(style_trend_table, axis=None).format(format_dict, na_rep="—")
+                st.dataframe(styled_trend, use_container_width=True)
+
+                # ==========================================================
+                # HỆ THỐNG AUTO-CONCLUSION (KẾT LUẬN TỰ ĐỘNG)
+                # ==========================================================
+                st.markdown("#### 💡 Automated Trend Conclusion")
+                periods_list = trend_df.index.tolist()
+                
+                if len(periods_list) >= 2:
+                    first_p = periods_list[0]
+                    last_p = periods_list[-1]
+                    
+                    for feat in ['YS', 'TS', 'EL', 'YPE']:
+                        cpk_col = f"{feat} Cpk"
+                        if cpk_col in trend_df.columns:
+                            val_first = trend_df.at[first_p, cpk_col]
+                            val_last = trend_df.at[last_p, cpk_col]
+                            
+                            if pd.isna(val_first) or pd.isna(val_last): continue
+                            
+                            diff = val_last - val_first
+                            
+                            # Đánh giá xu hướng
+                            if diff >= 0.05: trend_status = "📈 **Cải thiện** (Tăng)"
+                            elif diff <= -0.05: trend_status = "📉 **Suy giảm** (Giảm)"
+                            else: trend_status = "➡️ **Ổn định** (Đi ngang)"
+                            
+                            # Đánh giá rủi ro hiện tại
+                            if val_last >= 1.33: risk_status = "✅ **An Toàn** (Capable)"
+                            elif val_last >= 1.00: risk_status = "⚠️ **Cảnh báo** (Marginal)"
+                            else: risk_status = "❌ **Nguy hiểm** (Not Capable)"
+                            
+                            st.info(f"**{feat}:** So với giai đoạn [{first_p}], năng lực (Cpk) trong giai đoạn [{last_p}] đã chuyển từ **{val_first:.2f}** sang **{val_last:.2f}** ➔ Xu hướng: {trend_status}. Trạng thái hiện tại: {risk_status}.")
+                else:
+                    st.caption("ℹ️ Vui lòng chọn ít nhất 2 khoảng thời gian ở thanh bộ lọc (Filter) bên trái để hệ thống có thể so sánh và kết luận xu hướng.")
 
             st.markdown("### 📋 Detailed Capability Log")
+            # ==========================================================
+            # BẢNG CHI TIẾT NHẬT KÝ (LOG) BÊN DƯỚI
+            # ==========================================================
+            def color_cpk_cell(val):
+                if pd.isna(val): return ''
+                c = cpk_color(val)
+                return f'background-color:{c};color:white;font-weight:bold;text-align:center'
+
+            def color_ca_cell(val):
+                if pd.isna(val): return ''
+                av = abs(val)
+                if av <= 12.5: clr = '#2e7d32'
+                elif av <= 25:  clr = '#ffa726'
+                else:           clr = '#d62728'
+                return f'color:{clr};font-weight:bold;text-align:center'
+
+            fmt = {
+                'Mean': '{:.2f}', 'Std': '{:.3f}',
+                'Cp': '{:.3f}', 'Cpk': '{:.3f}',
+                'Ca (%)': lambda v: f'{v:.1f}%' if pd.notnull(v) else '—',
+                'LSL': lambda v: str(int(v)) if pd.notnull(v) else '—',
+                'USL': lambda v: str(int(v)) if pd.notnull(v) else '—',
+            }
+            styled = (
+                cap_df.style
+                .map(color_cpk_cell, subset=['Cpk'])
+                .map(color_ca_cell,  subset=['Ca (%)'])
+                .background_gradient(subset=['Cp'], cmap='RdYlGn', vmin=0.67, vmax=2.0)
+                .format(fmt, na_rep='—')
+            )
+            st.dataframe(styled, use_container_width=True, hide_index=True)
+
+            # Download capability summary
+            cap_xlsx = io.BytesIO()
+            try:
+                with pd.ExcelWriter(cap_xlsx, engine='xlsxwriter') as _w:
+                    cap_df.to_excel(_w, index=False, sheet_name='Capability_Log')
+                    if trend_data:
+                        trend_df.to_excel(_w, sheet_name='Capability_Trends')
+                
+                st.download_button(
+                    label="📥 Download Capability Summary & Trends (Excel)",
+                    data=cap_xlsx.getvalue(),
+                    file_name="Capability_Summary_Trends.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+            except Exception:
+                pass
+
+            st.markdown("---")
             # ==========================================================
             # BẢNG CHI TIẾT CŨ BÊN DƯỚI
             # ==========================================================
