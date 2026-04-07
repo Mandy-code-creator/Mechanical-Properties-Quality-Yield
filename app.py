@@ -1037,7 +1037,10 @@ if uploaded_file is not None:
             )
 
             fig3, ax3 = plt.subplots(figsize=(12, 5))
-            pivot_scrap_mat.plot(kind='bar', ax=ax3, colormap='Blues', edgecolor='white')
+            
+            # --- ĐÃ SỬA MÀU Ở ĐÂY: Đổi 'Blues' thành 'tab10' để các cột đều đậm và sắc nét ---
+            pivot_scrap_mat.plot(kind='bar', ax=ax3, colormap='tab10', edgecolor='white', linewidth=1)
+            
             ax3.set_title("Avg Scrap Rate (%) by Period & Material", fontweight='bold', fontsize=13)
             ax3.set_xlabel("")
             ax3.set_ylabel("Scrap Rate (%)")
