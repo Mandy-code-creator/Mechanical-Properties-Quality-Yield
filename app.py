@@ -14,6 +14,8 @@ st.set_page_config(page_title="Quality Dashboard", layout="wide")
 st.title("📊 Production Quality Yield & Distribution")
 st.markdown("---")
 
+COIL_ID_COL = '鋼捲號碼'
+
 GLOBAL_SPECS = {
     'YS': {'min': 400, 'max': 460, 'target': 430},
     'TS': {'min': 410, 'max': 470, 'target': 440},
@@ -33,7 +35,7 @@ if uploaded_file is not None:
     else:
         for i, c in enumerate(df.columns):
             if '型式' in c and i > 0:
-                df.rename(columns={df.columns[i - 1]: 'Actual_Thickness'}, inplace=True)
+                df.rename(columns={df.columns[i-1]: 'Actual_Thickness'}, inplace=True)
                 break
 
     if 'Actual_Thickness' in df.columns:
@@ -46,7 +48,6 @@ if uploaded_file is not None:
         )
 
     # --- Coil ID ---
-    COIL_ID_COL = '鋼捲號碼'
     if COIL_ID_COL in df.columns:
         df[COIL_ID_COL] = df[COIL_ID_COL].astype(str).str.strip()
     else:
@@ -135,12 +136,11 @@ if uploaded_file is not None:
     df_filtered = df[df['Time_Group'].isin(selected_periods)].copy()
     thickness_list = sorted(df['Actual_Thickness'].dropna().unique())
 
-    # ==========================================================
-    # TAB 1: YIELD SUMMARY
-    # ==========================================================
+    # --- TAB 1: YIELD SUMMARY ---
     with tab1:
         st.header("1. Quality Yield Summary & Worst Offenders")
         st.info("Overview of production yield. Chronologically sorted from 2024 onwards.")
+
         st.subheader("📊 Executive Summary: Production Quality Timeline")
 
         severe_grades = ['B+', 'B']
@@ -225,6 +225,7 @@ if uploaded_file is not None:
             sum_df[f"% {col}"] = (
                 (sum_df[col] / sum_df['Total_Qty'].replace(0, np.nan)) * 100
             ).fillna(0).round(1)
+
         sum_df['Sort_Key'] = sum_df['Time_Group'].map(time_order_map).fillna(90)
         sum_df = sum_df.sort_values(by=['Sort_Key', 'Actual_Thickness']).drop(columns=['Sort_Key'])
         sum_df.rename(columns={'Time_Group': 'Period', 'Actual_Thickness': 'Thickness'}, inplace=True)
@@ -245,12 +246,14 @@ if uploaded_file is not None:
 
         st.markdown("---")
         st.subheader("📊 Grade Distribution by Time Period (%)")
+
         grade_dist = df_filtered.groupby('Time_Group')[base_grades].sum()
         grade_dist['Total'] = grade_dist.sum(axis=1)
         for g in base_grades:
             grade_dist[f'pct_{g}'] = (
                 grade_dist[g] / grade_dist['Total'].replace(0, np.nan) * 100
             ).fillna(0).round(1)
+
         grade_dist_display = grade_dist[[f'pct_{g}' for g in base_grades]].copy()
         grade_dist_display.columns = base_grades
         grade_dist_display.index.name = 'Time Period'
@@ -262,19 +265,47 @@ if uploaded_file is not None:
 
         header_color = "#1a3a5c"
         alt_row_color = "#dce6f1"
+
         html = f"""
         <style>
-        .grade-table {{ width:100%; border-collapse:collapse; font-family:sans-serif; font-size:14px; margin-bottom:24px; }}
-        .grade-table th {{ background-color:{header_color}; color:white; padding:10px 16px; text-align:center; }}
-        .grade-table td {{ padding:9px 16px; text-align:center; border-bottom:1px solid #ccc; }}
-        .grade-table tr:nth-child(odd) td {{ background-color:{alt_row_color}; }}
-        .grade-table tr:nth-child(even) td {{ background-color:#ffffff; }}
-        .grade-table tr:hover td {{ background-color:#b8cce4; }}
+        .grade-table {{
+            width: 100%;
+            border-collapse: collapse;
+            font-family: sans-serif;
+            font-size: 14px;
+            margin-bottom: 24px;
+        }}
+        .grade-table th {{
+            background-color: {header_color};
+            color: white;
+            padding: 10px 16px;
+            text-align: center;
+        }}
+        .grade-table td {{
+            padding: 9px 16px;
+            text-align: center;
+            border-bottom: 1px solid #ccc;
+        }}
+        .grade-table tr:nth-child(odd) td {{
+            background-color: {alt_row_color};
+        }}
+        .grade-table tr:nth-child(even) td {{
+            background-color: #ffffff;
+        }}
+        .grade-table tr:hover td {{
+            background-color: #b8cce4;
+        }}
         </style>
         <table class="grade-table">
-            <thead><tr><th>Time Period</th>{''.join(f'<th>{g}</th>' for g in base_grades)}</tr></thead>
+            <thead>
+                <tr>
+                    <th>Time Period</th>
+                    {''.join(f'<th>{g}</th>' for g in base_grades)}
+                </tr>
+            </thead>
             <tbody>
         """
+
         for period, row in grade_dist_pct.iterrows():
             html += "<tr>"
             html += f"<td><b>{period}</b></td>"
@@ -287,10 +318,12 @@ if uploaded_file is not None:
                 else:
                     html += f'<td>{row[g]}</td>'
             html += "</tr>"
+
         html += "</tbody></table>"
         st.markdown(html, unsafe_allow_html=True)
 
         st.markdown("---")
+
         output = io.BytesIO()
         try:
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
@@ -304,23 +337,30 @@ if uploaded_file is not None:
                     'align': 'center', 'valign': 'vcenter'
                 })
                 num_fmt = workbook.add_format({'align': 'center', 'border': 1})
-                pct_fmt = workbook.add_format({'num_format': '0.00"%"', 'align': 'center', 'border': 1})
+                pct_fmt = workbook.add_format({
+                    'num_format': '0.00"%"', 'align': 'center', 'border': 1
+                })
                 for col_num, value in enumerate(period_summary.columns.values):
                     worksheet.write(0, col_num, value, header_fmt)
                     worksheet.set_column(col_num, col_num, 15)
-                worksheet.conditional_format(1, 6, len(period_summary), 6,
-                    {'type': '2_color_scale', 'min_color': "#F7FCF5", 'max_color': "#41AB5D"})
-                worksheet.conditional_format(1, 7, len(period_summary), 7,
-                    {'type': '2_color_scale', 'min_color': "#FFF5F0", 'max_color': "#EF3B2C"})
+                worksheet.conditional_format(
+                    1, 6, len(period_summary), 6,
+                    {'type': '2_color_scale', 'min_color': "#F7FCF5", 'max_color': "#41AB5D"}
+                )
+                worksheet.conditional_format(
+                    1, 7, len(period_summary), 7,
+                    {'type': '2_color_scale', 'min_color': "#FFF5F0", 'max_color': "#EF3B2C"}
+                )
                 for row in range(1, len(period_summary) + 1):
                     for col in range(len(period_summary.columns)):
-                        val = period_summary.iloc[row - 1, col]
+                        val = period_summary.iloc[row-1, col]
                         if col >= 6 and isinstance(val, (int, float)):
-                            worksheet.write(row, col, val / 100, pct_fmt)
+                            worksheet.write(row, col, val/100, pct_fmt)
                         else:
                             worksheet.write(row, col, val, num_fmt)
             st.download_button(
-                label="📥 Download Formatted Excel", data=output.getvalue(),
+                label="📥 Download Formatted Excel",
+                data=output.getvalue(),
                 file_name="Colored_Yield.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
@@ -328,12 +368,11 @@ if uploaded_file is not None:
             st.download_button(
                 label="📥 Download Basic CSV",
                 data=period_summary.to_csv(index=False).encode('utf-8'),
-                file_name="Yield_Summary.csv", mime="text/csv"
+                file_name="Yield_Summary.csv",
+                mime="text/csv"
             )
 
-    # ==========================================================
-    # TAB 2: DISTRIBUTION
-    # ==========================================================
+    # --- TAB 2: DISTRIBUTION ---
     with tab2:
         global_x_bounds = {}
         for feat in mech_features:
@@ -342,7 +381,7 @@ if uploaded_file is not None:
                 vd = vd[vd['Total_Qty'] > 0]
                 if not vd.empty:
                     q1, q99 = np.percentile(vd[feat], 1), np.percentile(vd[feat], 99)
-                    global_x_bounds[feat] = (q1 - (q99 - q1) * 0.25, q99 + (q99 - q1) * 0.25)
+                    global_x_bounds[feat] = (q1 - (q99-q1)*0.25, q99 + (q99-q1)*0.25)
 
         def get_shared_y(data, features):
             max_y = 0
@@ -374,36 +413,50 @@ if uploaded_file is not None:
                     m = np.average(td[feat].values, weights=td[g].values)
                     ax.axvline(m, color=c_map[g], ls='--', lw=1.2)
                     m_info.append({'v': m, 'c': c_map[g], 'label': g})
+
             if v_l:
                 ax.hist(v_l, bins=np.linspace(fmin, fmax, 16), weights=w_l, color=clrs,
                         stacked=True, edgecolor='white', alpha=0.7)
+
                 m_info.sort(key=lambda x: x['v'])
                 x_range = fmax - fmin
                 min_gap = x_range * 0.045
+
                 positions = [info['v'] for info in m_info]
                 for _ in range(50):
                     moved = False
                     for i in range(1, len(positions)):
-                        if positions[i] - positions[i - 1] < min_gap:
-                            mid = (positions[i] + positions[i - 1]) / 2
-                            positions[i - 1] = mid - min_gap / 2
+                        if positions[i] - positions[i-1] < min_gap:
+                            mid = (positions[i] + positions[i-1]) / 2
+                            positions[i-1] = mid - min_gap / 2
                             positions[i] = mid + min_gap / 2
                             moved = True
                     if not moved:
                         break
+
                 y_levels = [y_lim * (0.92 - (i % 4) * 0.13) for i in range(len(m_info))]
+
                 for i, info in enumerate(m_info):
                     x_pos = positions[i]
                     y_pos = y_levels[i]
                     ax.annotate(
                         f"{info['v']:.1f}",
-                        xy=(info['v'], y_pos * 0.6), xytext=(x_pos, y_pos),
-                        color='white', fontweight='bold', fontsize=8,
-                        ha='center', va='center',
+                        xy=(info['v'], y_pos * 0.6),
+                        xytext=(x_pos, y_pos),
+                        color='white',
+                        fontweight='bold',
+                        fontsize=8,
+                        ha='center',
+                        va='center',
                         bbox=dict(facecolor=info['c'], alpha=0.85, boxstyle='round,pad=0.25'),
-                        arrowprops=dict(arrowstyle='-', color=info['c'], lw=1.0, alpha=0.6)
-                        if abs(x_pos - info['v']) > min_gap * 0.3 else None
+                        arrowprops=dict(
+                            arrowstyle='-',
+                            color=info['c'],
+                            lw=1.0,
+                            alpha=0.6
+                        ) if abs(x_pos - info['v']) > min_gap * 0.3 else None
                     )
+
             ax.legend(
                 handles=[Patch(facecolor=c_map[g], label=g) for g in base_grades if g in data.columns],
                 loc='upper right', fontsize=7
@@ -412,7 +465,6 @@ if uploaded_file is not None:
             ax.set_ylim(0, y_lim)
             ax.set_title(title, fontsize=10, fontweight='bold')
 
-        tab2_saved_files = []
         for period in selected_periods:
             df_p = df_filtered[df_filtered['Time_Group'] == period]
             if df_p.empty:
@@ -427,9 +479,9 @@ if uploaded_file is not None:
                     plot_dist(ax, df_p, f, f"{f} (Overall - {period})", ov_y)
                     fname = f"export_tab2_{safe_period}_overall_{f}.png"
                     plt.savefig(fname, bbox_inches='tight', dpi=150)
-                    tab2_saved_files.append(fname)
                     st.pyplot(fig)
                     plt.close(fig)
+
             for thick in thickness_list:
                 df_t = df_p[df_p['Actual_Thickness'] == thick]
                 if df_t.empty:
@@ -440,16 +492,13 @@ if uploaded_file is not None:
                 for idx, f in enumerate([x for x in ['YS', 'TS', 'EL', 'YPE'] if x in df_t.columns]):
                     with tcols[idx % 2]:
                         fig, ax = plt.subplots(figsize=(8, 4.5))
-                        plot_dist(ax, df_t, f, f"{f} (Thick:{thick} - {period})", ly)
-                        fname = f"export_tab2_{safe_period}_t{str(thick).replace('.', 'p')}_{f}.png"
+                        plot_dist(ax, df_t, f, f"{f} (Thick: {thick} - {period})", ly)
+                        fname = f"export_tab2_{safe_period}_t{str(thick).replace('.','p')}_{f}.png"
                         plt.savefig(fname, bbox_inches='tight', dpi=150)
-                        tab2_saved_files.append(fname)
                         st.pyplot(fig)
                         plt.close(fig)
 
-    # ==========================================================
-    # TAB 3: ROOT CAUSE & DIAGNOSTIC
-    # ==========================================================
+    # --- TAB 3: ROOT CAUSE & DIAGNOSTIC ---
     with tab3:
         st.header("🧠 Executive Auto-Insight & Root Cause")
         st.info("Automated diagnostic engine: Quantifying impact based on severe defects (B+, B).")
@@ -465,8 +514,6 @@ if uploaded_file is not None:
             if x['Total_Qty'].sum() > 0 else 0
         )
 
-        df_unique_global = df_filtered.drop_duplicates(subset=['Row_ID'])
-
         if not heat_data.empty and heat_data.max() > 0:
             heatmap_long = heat_data.reset_index()
             heatmap_long.columns = ['Spec', 'Period', 'Defect_Rate']
@@ -480,15 +527,20 @@ if uploaded_file is not None:
                     (df_filtered['Time_Group'] == row['Period'])
                 ]
                 top_3_subsets.append(subset)
+
             if top_3_subsets:
                 df_top3 = pd.concat(top_3_subsets).drop_duplicates(subset=['Row_ID'])
             else:
                 df_top3 = pd.DataFrame(columns=df_filtered.columns)
 
+            df_unique_global = df_filtered.drop_duplicates(subset=['Row_ID'])
+
             rc_results = {}
             for f in ['YS', 'TS', 'EL', 'YPE']:
                 if f in df_top3.columns:
-                    good_mean_global = df_unique_global[df_unique_global['Good_Qty'] > 0][f].mean()
+                    good_mean_global = df_unique_global[
+                        df_unique_global['Good_Qty'] > 0
+                    ][f].mean()
                     bad_mean_top3 = df_top3[df_top3['Severe_Bad_Qty'] > 0][f].mean()
                     if pd.notnull(good_mean_global) and pd.notnull(bad_mean_top3):
                         rc_results[f] = bad_mean_top3 - good_mean_global
@@ -502,7 +554,7 @@ if uploaded_file is not None:
                 direction = "HIGHER ⬆️" if gap_val > 0 else "LOWER ⬇️"
                 st.success(f"""
 ### 🎯 EXECUTIVE CONCLUSION & ACTION PLAN:
-* 🚨 **Biggest Hotspot:** Specification **{top_issue['Spec']}** during **{top_issue['Period']}** (Severe Defect Rate: **{top_issue['Defect_Rate']:.1f}%**).
+* 🚨 **Biggest Hotspot:** Specification **{top_issue['Spec']}** during **{top_issue['Period']}** (Severe Defect Rate hits **{top_issue['Defect_Rate']:.1f}%**).
 * 🧠 **Main Root Cause Driver:** **{top_driver}** is the primary culprit.
 * 📊 **Quantified Impact:** Defective coils have a {top_driver} that is on average **{abs(gap_val):.1f} {direction}** than good coils.
                 """)
@@ -510,7 +562,7 @@ if uploaded_file is not None:
             st.markdown("---")
             col1, col2 = st.columns(2)
             with col1:
-                st.error("🔥 TOP 5 PROBLEM SEGMENTS")
+                st.error("🔥 TOP 5 PROBLEM SEGMENTS (Where to fix)")
                 st.dataframe(
                     top_issues.style.background_gradient(subset=['Defect_Rate'], cmap='Reds')
                         .format({'Defect_Rate': '{:.1f}%'}),
@@ -518,7 +570,7 @@ if uploaded_file is not None:
                 )
             with col2:
                 st.warning("🧠 ROOT CAUSE DRIVER (Top 3 Hotspots)")
-                st.info("Mean difference: Bad Coils (Top 3) vs Global Good Coils (Deduplicated).")
+                st.info("Analysis: Mean difference of Bad Coils (in Top 3 problem areas) vs. Global Good Coils (Deduplicated).")
                 rc_df = rc_s.reset_index()
                 rc_df.columns = ['Mechanical Feature', 'Impact Gap (Top 3 Bad vs Good)']
 
@@ -535,7 +587,7 @@ if uploaded_file is not None:
             if not rc_s.empty:
                 st.markdown("---")
                 top_driver = rc_s.index[0]
-                st.info(f"📏 DRILL DOWN: {top_driver} Shift by Thickness")
+                st.info(f"📏 DRILL DOWN: {top_driver} Shift by Thickness (Isolating the issue)")
                 drill_data = []
                 for th in df_unique_global['Actual_Thickness'].dropna().unique():
                     th_df = df_unique_global[df_unique_global['Actual_Thickness'] == th]
@@ -543,17 +595,22 @@ if uploaded_file is not None:
                     b_val = th_df[th_df['Severe_Bad_Qty'] > 0][top_driver].mean()
                     if pd.notnull(g_val) or pd.notnull(b_val):
                         drill_data.append({
-                            'Thickness': th, 'GOOD Coils (Mean)': g_val,
+                            'Thickness': th,
+                            'GOOD Coils (Mean)': g_val,
                             'BAD Coils (Mean)': b_val,
                             'Impact Gap': (b_val - g_val)
                             if (pd.notnull(g_val) and pd.notnull(b_val)) else None
                         })
-                drill_df = pd.DataFrame(drill_data).sort_values('Impact Gap', key=abs, ascending=False)
+                drill_df = pd.DataFrame(drill_data).sort_values(
+                    'Impact Gap', key=abs, ascending=False
+                )
                 st.dataframe(
                     drill_df.style.map(color_gap, subset=['Impact Gap'])
                         .format({
-                            'Thickness': '{:.2f}mm', 'GOOD Coils (Mean)': '{:.1f}',
-                            'BAD Coils (Mean)': '{:.1f}', 'Impact Gap': '{:+.1f}'
+                            'Thickness': '{:.2f}mm',
+                            'GOOD Coils (Mean)': '{:.1f}',
+                            'BAD Coils (Mean)': '{:.1f}',
+                            'Impact Gap': '{:+.1f}'
                         }),
                     use_container_width=True, hide_index=True
                 )
@@ -574,7 +631,7 @@ if uploaded_file is not None:
             plt.close(fig)
 
         else:
-            st.success("✅ Process is completely stable. No severe defect patterns detected.")
+            st.success("✅ Process is completely stable. No severe defect patterns detected to analyze.")
 
         st.markdown("---")
         st.header("📈 Global I-MR Stability Tracking (Severe Defects: B+ and Below)")
@@ -598,12 +655,14 @@ if uploaded_file is not None:
                         fig, (ax1, ax2) = plt.subplots(
                             2, 1, figsize=(14, 8), gridspec_kw={'height_ratios': [2, 1]}
                         )
+
                         ax1.plot(x_seq, vals, marker='o', ms=5, lw=1.5,
                                  color='#004C99', alpha=0.9, label=f"Value ({feat})")
                         ax1.axhline(mean_v, color='black', ls='--', lw=1.5,
                                     label=f'Mean: {mean_v:.1f}')
                         ax1.text(x_seq[-1], mean_v, f" Mean: {mean_v:.1f}",
                                  va='bottom', color='black', fontweight='bold')
+
                         if feat in GLOBAL_SPECS:
                             s = GLOBAL_SPECS[feat]
                             if s['min']:
@@ -620,11 +679,13 @@ if uploaded_file is not None:
                                     v_x.append(i); v_y.append(v)
                             if v_x:
                                 ax1.scatter(v_x, v_y, color='red', s=60, zorder=5)
+
                         for i in range(1, len(dates)):
-                            if dates.iloc[i].year != dates.iloc[i - 1].year:
+                            if dates.iloc[i].year != dates.iloc[i-1].year:
                                 ax1.axvline(i, color='gray', ls=':', alpha=0.5)
                                 ax1.text(i, ax1.get_ylim()[1],
                                          f" {dates.iloc[i].year}", fontsize=10, va='top')
+
                         ax1.set_title(f"Individual Chart (I) - {feat}", fontweight='bold')
                         ax1.legend(loc='upper right', fontsize=9, bbox_to_anchor=(1.15, 1))
                         ax1.set_xticks([])
@@ -632,33 +693,36 @@ if uploaded_file is not None:
                         mr = np.abs(np.diff(vals))
                         mr_mean = np.mean(mr)
                         ucl_mr = 3.267 * mr_mean
+
                         ax2.plot(x_seq[1:], mr, marker='o', ms=5, lw=1.5,
                                  color='#4B0082', alpha=0.9, label="Moving Range")
                         ax2.axhline(mr_mean, color='black', ls='--', lw=1.5,
                                     label=f'MR Mean: {mr_mean:.1f}')
                         ax2.axhline(ucl_mr, color='red', ls=':', lw=1.5,
                                     label=f'UCL: {ucl_mr:.1f}')
+
                         hv_x, hv_y = [], []
                         for i, m_val in enumerate(mr):
                             if m_val > ucl_mr:
-                                hv_x.append(i + 1); hv_y.append(m_val)
+                                hv_x.append(i+1); hv_y.append(m_val)
                         if hv_x:
                             ax2.scatter(hv_x, hv_y, color='red', s=40, zorder=5)
+
                         ax2.set_title("Moving Range Chart (MR)", fontweight='bold')
                         ax2.legend(loc='upper right', fontsize=9, bbox_to_anchor=(1.15, 1))
+
                         step = max(1, len(x_seq) // 12)
                         ax2.set_xticks(x_seq[::step])
                         ax2.set_xticklabels(
                             dates.dt.strftime('%Y-%m-%d').iloc[::step], rotation=45, ha='right'
                         )
+
                         fig.tight_layout()
                         plt.savefig(f"export_imr_global_{feat}.png", bbox_inches='tight', dpi=150)
                         st.pyplot(fig)
                         plt.close(fig)
 
-    # ==========================================================
-    # TAB 4: I-MR CHART
-    # ==========================================================
+    # --- TAB 4: I-MR CHART ---
     with tab4:
         st.header("📈 Task 4: I-MR Stability Tracking (Chronological)")
         st.info("Analysis based on production sequence from 2024 to 2026. Red dots = Out of Spec.")
@@ -670,6 +734,7 @@ if uploaded_file is not None:
             )
             imr_thicks = sorted(df_filtered['Actual_Thickness'].dropna().unique())
             imr_mats = sorted(df_filtered['HR_Material'].astype(str).unique())
+
             c1, c2, c3 = st.columns(3)
             sel_p = c1.selectbox("Filter Period:", imr_periods, key="t4_p")
             sel_t = c2.selectbox("Filter Thickness:", imr_thicks, key="t4_t")
@@ -686,6 +751,7 @@ if uploaded_file is not None:
                     (df_filtered['Actual_Thickness'] == sel_t) &
                     (df_filtered['HR_Material'] == sel_m)
                 ]
+
             imr_df = imr_df.sort_values(by='烤三生產日期').reset_index(drop=True)
 
             if not imr_df.empty:
@@ -703,9 +769,11 @@ if uploaded_file is not None:
                             fig, (ax1, ax2) = plt.subplots(
                                 2, 1, figsize=(12, 7), gridspec_kw={'height_ratios': [2, 1]}
                             )
+
                             ax1.plot(x_seq, vals, marker='o', ms=5, lw=1.5,
                                      color='#004C99', alpha=0.9, label=feat)
                             ax1.axhline(mean_v, color='black', ls='--', lw=1.5, label='Mean')
+
                             if feat in GLOBAL_SPECS:
                                 s = GLOBAL_SPECS[feat]
                                 if s['min']:
@@ -718,12 +786,14 @@ if uploaded_file is not None:
                                         v_x.append(i); v_y.append(v)
                                 if v_x:
                                     ax1.scatter(v_x, v_y, color='red', s=60, zorder=5)
+
                             if sel_p == "All Periods":
                                 for i in range(1, len(dates)):
-                                    if dates.iloc[i].year != dates.iloc[i - 1].year:
+                                    if dates.iloc[i].year != dates.iloc[i-1].year:
                                         ax1.axvline(i, color='gray', ls=':', alpha=0.5)
                                         ax1.text(i, ax1.get_ylim()[1],
                                                  f" {dates.iloc[i].year}", fontsize=10, va='top')
+
                             ax1.set_title(f"Individual Chart (I) - {feat}", fontweight='bold')
                             ax1.legend(loc='upper right', fontsize=8)
                             ax1.set_xticks([])
@@ -731,22 +801,26 @@ if uploaded_file is not None:
                             mr = np.abs(np.diff(vals))
                             mr_mean = np.mean(mr)
                             ucl_mr = 3.267 * mr_mean
-                            ax2.plot(x_seq[1:], mr, marker='o', ms=5, lw=1.5,
-                                     color='#4B0082', alpha=0.9)
+
+                            ax2.plot(x_seq[1:], mr, marker='o', ms=5, lw=1.5, color='#4B0082', alpha=0.9)
                             ax2.axhline(mr_mean, color='black', ls='--', lw=1.5)
                             ax2.axhline(ucl_mr, color='red', ls=':', lw=1.5)
+
                             hv_x, hv_y = [], []
                             for i, m_val in enumerate(mr):
                                 if m_val > ucl_mr:
-                                    hv_x.append(i + 1); hv_y.append(m_val)
+                                    hv_x.append(i+1); hv_y.append(m_val)
                             if hv_x:
                                 ax2.scatter(hv_x, hv_y, color='red', s=40, zorder=5)
+
                             ax2.set_title("Moving Range Chart (MR)", fontweight='bold')
+
                             step = max(1, len(x_seq) // 12)
                             ax2.set_xticks(x_seq[::step])
                             ax2.set_xticklabels(
                                 dates.dt.strftime('%Y-%m-%d').iloc[::step], rotation=45, ha='right'
                             )
+
                             fig.tight_layout()
                             plt.savefig(f"export_imr_{feat}.png", bbox_inches='tight', dpi=150)
                             st.pyplot(fig)
@@ -757,20 +831,20 @@ if uploaded_file is not None:
         render_tab4()
 
     # ==========================================================
-    # TAB 5: TAIL SCRAP ANALYSIS (COIL-ID AWARE)
+    # --- TAB 5: TAIL SCRAP ANALYSIS (COIL-ID AWARE) ---
     # ==========================================================
     with tab5:
         st.header("5. Tail Scrap & Length Rejection Analysis")
         st.info(
             "Analysis of tail scrap rejection rate based on 實測長度 (Measured Length) "
             "and 尾料剔退 (Tail Scrap Rejected).\n\n"
-            "⚙️ **Coil-ID Aware Logic:** A coil running through the line multiple times "
-            "is handled correctly — **original length** (first pass) as base, "
-            "**all scrap cuts summed** across every pass."
+            "⚙️ **Coil-ID Aware Logic:** A coil that runs through the line multiple times "
+            "is handled correctly — the **original length** (first pass) is used as the "
+            "base, while **all scrap cuts are summed** across every pass."
         )
 
         col_length = '實測長度'
-        col_scrap = '尾料剔退'
+        col_scrap  = '尾料剔退'
 
         if col_length not in df_filtered.columns or col_scrap not in df_filtered.columns:
             missing = [c for c in [col_length, col_scrap] if c not in df_filtered.columns]
@@ -778,34 +852,43 @@ if uploaded_file is not None:
         else:
             df_scrap_raw = df_filtered.copy()
             df_scrap_raw[col_length] = pd.to_numeric(df_scrap_raw[col_length], errors='coerce')
-            df_scrap_raw[col_scrap] = pd.to_numeric(df_scrap_raw[col_scrap], errors='coerce')
+            df_scrap_raw[col_scrap]  = pd.to_numeric(df_scrap_raw[col_scrap],  errors='coerce')
             df_scrap_raw = df_scrap_raw.dropna(subset=[col_length, col_scrap, COIL_ID_COL])
             df_scrap_raw = df_scrap_raw[df_scrap_raw[col_length] > 0]
 
-            # --- COIL-ID DEDUPLICATION ---
-            # Pass 1: length=650, scrap=25 → original length
-            # Pass 2: length=450, scrap=35 → extra scrap only
-            # Total scrap = 60 / Original length 650 = 9.23%  (not 60/1100)
             df_scrap_sorted = df_scrap_raw.sort_values(
-                by=[COIL_ID_COL, '烤三生產日期'], na_position='last'
+                by=['Time_Group', COIL_ID_COL, '烤三生產日期'], na_position='last'
             )
+
             coil_first = (
-                df_scrap_sorted.groupby(COIL_ID_COL, sort=False).first().reset_index()
+                df_scrap_sorted
+                .groupby(['Time_Group', COIL_ID_COL], sort=False)
+                .first()
+                .reset_index()
                 [[COIL_ID_COL, col_length, 'Time_Group', 'Actual_Thickness', 'HR_Material', '烤三生產日期']]
                 .rename(columns={col_length: 'Original_Length'})
             )
+
             coil_scrap_sum = (
-                df_scrap_sorted.groupby(COIL_ID_COL)[col_scrap].sum().reset_index()
+                df_scrap_sorted
+                .groupby(['Time_Group', COIL_ID_COL])[col_scrap]
+                .sum()
+                .reset_index()
                 .rename(columns={col_scrap: 'Total_Scrap'})
             )
+
             coil_pass_count = (
-                df_scrap_sorted.groupby(COIL_ID_COL)[col_length].count().reset_index()
+                df_scrap_sorted
+                .groupby(['Time_Group', COIL_ID_COL])[col_length]
+                .count()
+                .reset_index()
                 .rename(columns={col_length: 'Pass_Count'})
             )
+
             df_coil = (
                 coil_first
-                .merge(coil_scrap_sum, on=COIL_ID_COL)
-                .merge(coil_pass_count, on=COIL_ID_COL)
+                .merge(coil_scrap_sum, on=['Time_Group', COIL_ID_COL])
+                .merge(coil_pass_count, on=['Time_Group', COIL_ID_COL])
             )
             df_coil['Scrap_Rate (%)'] = (
                 df_coil['Total_Scrap'] / df_coil['Original_Length'] * 100
@@ -814,33 +897,38 @@ if uploaded_file is not None:
             multi_pass = df_coil[df_coil['Pass_Count'] > 1]
             if not multi_pass.empty:
                 st.info(
-                    f"🔄 **{len(multi_pass)} coils** detected running through the line "
-                    f"**more than once**. Scrap accumulated across all passes; "
-                    f"length counted only once (original pass)."
+                    f"🔄 **{len(multi_pass)} coils** were detected running through the line "
+                    f"**more than once** (multi-pass). Their scrap was accumulated across all "
+                    f"passes but length is counted only once (original pass)."
                 )
                 with st.expander("📋 View Multi-Pass Coil Detail"):
                     st.dataframe(
                         multi_pass[[
-                            COIL_ID_COL, 'Time_Group', 'Actual_Thickness', 'HR_Material',
-                            'Original_Length', 'Total_Scrap', 'Pass_Count', 'Scrap_Rate (%)'
+                            COIL_ID_COL, 'Time_Group', 'Actual_Thickness',
+                            'HR_Material', 'Original_Length', 'Total_Scrap',
+                            'Pass_Count', 'Scrap_Rate (%)'
                         ]].sort_values('Pass_Count', ascending=False).style
                           .background_gradient(subset=['Scrap_Rate (%)'], cmap='Oranges')
                           .format({
-                              'Original_Length': '{:,.1f}', 'Total_Scrap': '{:,.1f}',
+                              'Original_Length': '{:,.1f}',
+                              'Total_Scrap': '{:,.1f}',
                               'Scrap_Rate (%)': '{:.2f}%'
                           }),
                         use_container_width=True, hide_index=True
                     )
 
-            # --- SECTION 1: BY TIME PERIOD ---
             st.markdown("---")
             st.subheader("📅 Section 1: Scrap Rate by Time Period")
+
             scrap_by_period = (
-                df_coil.groupby('Time_Group').agg(
+                df_coil
+                .groupby('Time_Group')
+                .agg(
                     Total_Length=('Original_Length', 'sum'),
                     Total_Scrap=('Total_Scrap', 'sum'),
                     Coil_Count=(COIL_ID_COL, 'count'),
-                ).reset_index()
+                )
+                .reset_index()
             )
             scrap_by_period['Scrap_Rate (%)'] = (
                 scrap_by_period['Total_Scrap'] / scrap_by_period['Total_Length'] * 100
@@ -853,8 +941,10 @@ if uploaded_file is not None:
                 scrap_by_period.style
                     .background_gradient(subset=['Scrap_Rate (%)'], cmap='Reds')
                     .format({
-                        'Total_Length': '{:,.1f}', 'Total_Scrap': '{:,.1f}',
-                        'Coil_Count': '{:.0f}', 'Scrap_Rate (%)': '{:.2f}%'
+                        'Total_Length': '{:,.1f}',
+                        'Total_Scrap': '{:,.1f}',
+                        'Coil_Count': '{:.0f}',
+                        'Scrap_Rate (%)': '{:.2f}%'
                     }),
                 use_container_width=True, hide_index=True
             )
@@ -862,12 +952,14 @@ if uploaded_file is not None:
             fig1, ax1 = plt.subplots(figsize=(10, 4))
             colors = plt.cm.Reds(np.linspace(0.3, 0.85, len(scrap_by_period)))
             bars = ax1.bar(
-                scrap_by_period['Time Period'], scrap_by_period['Scrap_Rate (%)'],
+                scrap_by_period['Time Period'],
+                scrap_by_period['Scrap_Rate (%)'],
                 color=colors, edgecolor='white'
             )
             for bar, val in zip(bars, scrap_by_period['Scrap_Rate (%)']):
                 ax1.text(
-                    bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.05,
+                    bar.get_x() + bar.get_width() / 2,
+                    bar.get_height() + 0.05,
                     f"{val:.2f}%", ha='center', va='bottom',
                     fontsize=10, fontweight='bold', color='#333'
                 )
@@ -881,15 +973,18 @@ if uploaded_file is not None:
             st.pyplot(fig1)
             plt.close(fig1)
 
-            # --- SECTION 2: BY PERIOD + THICKNESS + MATERIAL ---
             st.markdown("---")
             st.subheader("📏 Section 2: Scrap Rate by Period / Thickness / Material")
+
             scrap_detail = (
-                df_coil.groupby(['Time_Group', 'Actual_Thickness', 'HR_Material']).agg(
+                df_coil
+                .groupby(['Time_Group', 'Actual_Thickness', 'HR_Material'])
+                .agg(
                     Total_Length=('Original_Length', 'sum'),
                     Total_Scrap=('Total_Scrap', 'sum'),
                     Coil_Count=(COIL_ID_COL, 'count'),
-                ).reset_index()
+                )
+                .reset_index()
             )
             scrap_detail['Scrap_Rate (%)'] = (
                 scrap_detail['Total_Scrap'] / scrap_detail['Total_Length'] * 100
@@ -904,14 +999,15 @@ if uploaded_file is not None:
                 scrap_detail.style
                     .background_gradient(subset=['Scrap_Rate (%)'], cmap='Reds')
                     .format({
-                        'Actual_Thickness': '{:.2f}mm', 'Total_Length': '{:,.1f}',
-                        'Total_Scrap': '{:,.1f}', 'Coil_Count': '{:.0f}',
+                        'Actual_Thickness': '{:.2f}mm',
+                        'Total_Length': '{:,.1f}',
+                        'Total_Scrap': '{:,.1f}',
+                        'Coil_Count': '{:.0f}',
                         'Scrap_Rate (%)': '{:.2f}%'
                     }),
                 use_container_width=True, hide_index=True
             )
 
-            # Chart: Scrap by Thickness
             st.markdown("#### 📊 Scrap Rate by Thickness across Periods")
             pivot_scrap = scrap_detail.groupby(
                 ['Time_Group', 'Actual_Thickness']
@@ -919,8 +1015,15 @@ if uploaded_file is not None:
             pivot_scrap = pivot_scrap.reindex(
                 sorted(pivot_scrap.index, key=lambda x: time_order_map.get(x, 99))
             )
+
             fig2, ax2 = plt.subplots(figsize=(12, 5))
             pivot_scrap.plot(kind='bar', ax=ax2, colormap='YlOrRd', edgecolor='white')
+            
+            for container in ax2.containers:
+                labels = [f"{v.get_height():.1f}%" if v.get_height() > 0 else "" for v in container]
+                ax2.bar_label(container, labels=labels, label_type='edge', fontsize=9, fontweight='bold', color='#333', padding=3)
+            
+            ax2.set_ylim(0, ax2.get_ylim()[1] * 1.15)
             ax2.set_title("Avg Scrap Rate (%) by Period & Thickness", fontweight='bold', fontsize=13)
             ax2.set_xlabel("")
             ax2.set_ylabel("Scrap Rate (%)")
@@ -931,7 +1034,6 @@ if uploaded_file is not None:
             st.pyplot(fig2)
             plt.close(fig2)
 
-            # Chart: Scrap by Material — high-contrast distinct colors
             st.markdown("#### 🧱 Scrap Rate by Material across Periods")
             pivot_scrap_mat = scrap_detail.groupby(
                 ['Time_Group', 'HR_Material']
@@ -940,41 +1042,24 @@ if uploaded_file is not None:
                 sorted(pivot_scrap_mat.index, key=lambda x: time_order_map.get(x, 99))
             )
 
-            MATERIAL_COLORS = [
-                '#E63946',  # vivid red
-                '#2A9D8F',  # teal green
-                '#E9C46A',  # golden yellow
-                '#457B9D',  # steel blue
-                '#F4A261',  # warm orange
-                '#6A4C93',  # purple
-                '#264653',  # dark teal
-                '#A8DADC',  # light cyan
-            ]
-            mat_colors = MATERIAL_COLORS[:len(pivot_scrap_mat.columns)]
-
             fig3, ax3 = plt.subplots(figsize=(12, 5))
-            pivot_scrap_mat.plot(
-                kind='bar', ax=ax3, color=mat_colors, edgecolor='white', linewidth=0.8
-            )
+            pivot_scrap_mat.plot(kind='bar', ax=ax3, colormap='tab10', edgecolor='white', linewidth=1)
+            
             for container in ax3.containers:
-                ax3.bar_label(
-                    container, fmt='%.1f%%', label_type='edge',
-                    fontsize=8, padding=2, color='#333333', fontweight='bold'
-                )
+                labels = [f"{v.get_height():.1f}%" if v.get_height() > 0 else "" for v in container]
+                ax3.bar_label(container, labels=labels, label_type='edge', fontsize=9, fontweight='bold', color='#333', padding=3)
+            
+            ax3.set_ylim(0, ax3.get_ylim()[1] * 1.15)
             ax3.set_title("Avg Scrap Rate (%) by Period & Material", fontweight='bold', fontsize=13)
             ax3.set_xlabel("")
             ax3.set_ylabel("Scrap Rate (%)")
-            ax3.set_ylim(0, pivot_scrap_mat.max().max() * 1.25 + 1)
-            ax3.legend(title="Material", bbox_to_anchor=(1.02, 1), loc='upper left', framealpha=0.9)
+            ax3.legend(title="Material", bbox_to_anchor=(1.02, 1), loc='upper left')
             ax3.tick_params(axis='x', rotation=25)
-            ax3.grid(axis='y', linestyle='--', alpha=0.4)
-            ax3.set_axisbelow(True)
             fig3.tight_layout()
             plt.savefig("export_tab5_scrap_by_material.png", bbox_inches='tight', dpi=150)
             st.pyplot(fig3)
             plt.close(fig3)
-            
-            # --- DOWNLOAD ---
+
             st.markdown("---")
             output_scrap = io.BytesIO()
             try:
@@ -983,7 +1068,6 @@ if uploaded_file is not None:
                     scrap_detail.to_excel(
                         writer, index=False, sheet_name='By_Period_Thickness_Material'
                     )
-                    compare_df.to_excel(writer, index=False, sheet_name='Raw_vs_Corrected')
                     if not multi_pass.empty:
                         multi_pass.to_excel(writer, index=False, sheet_name='Multi_Pass_Coils')
                 st.download_button(
@@ -995,9 +1079,9 @@ if uploaded_file is not None:
             except Exception as e:
                 st.warning(f"Could not generate Excel: {e}")
 
-    # ==========================================================
-    # EXPORT PDF
-    # ==========================================================
+    # =========================================================
+    # --- EXPORT PDF SECTION ---
+    # =========================================================
     st.sidebar.header("📥 Export PDF Report")
     st.sidebar.info(
         "💡 Tip: Browse through all tabs first so all charts are generated before exporting."
@@ -1017,20 +1101,20 @@ if uploaded_file is not None:
                 pdf.ln(3)
 
             def add_images_to_pdf(pdf, img_files, title, page_width_mm=262, margin_x=15):
-                if not img_files:
-                    return
+                if not img_files: return
                 pdf.add_page()
                 add_section_title(pdf, title)
+                top_margin = 15
                 bottom_margin = 10
                 page_height = 210
                 y_cursor = pdf.get_y()
+
                 for img_path in img_files:
-                    if not os.path.exists(img_path):
-                        continue
+                    if not os.path.exists(img_path): continue
                     img_h = get_image_height_mm(img_path, page_width_mm)
                     if y_cursor + img_h > page_height - bottom_margin:
                         pdf.add_page()
-                        y_cursor = 15
+                        y_cursor = top_margin
                     pdf.image(img_path, x=margin_x, y=y_cursor, w=page_width_mm)
                     y_cursor += img_h + 4
                     pdf.set_y(y_cursor)
@@ -1045,53 +1129,29 @@ if uploaded_file is not None:
                 img_h = get_image_height_mm("export_heatmap.png", img_w)
                 pdf.image("export_heatmap.png", x=15, y=pdf.get_y(), w=img_w)
 
-            tab1_files = sorted([
-                f for f in os.listdir('.') if f.startswith("export_tab1_") and f.endswith(".png")
-            ])
-            if tab1_files:
-                add_images_to_pdf(pdf, tab1_files, "2. YIELD SUMMARY CHARTS (TAB 1)")
+            tab1_files = sorted([f for f in os.listdir('.') if f.startswith("export_tab1_") and f.endswith(".png")])
+            if tab1_files: add_images_to_pdf(pdf, tab1_files, "2. YIELD SUMMARY CHARTS (TAB 1)")
 
-            tab2_files = sorted([
-                f for f in os.listdir('.') if f.startswith("export_tab2_") and f.endswith(".png")
-            ])
-            if tab2_files:
-                add_images_to_pdf(pdf, tab2_files, "3. DISTRIBUTION ANALYSIS (TAB 2)")
+            tab2_files = sorted([f for f in os.listdir('.') if f.startswith("export_tab2_") and f.endswith(".png")])
+            if tab2_files: add_images_to_pdf(pdf, tab2_files, "3. DISTRIBUTION ANALYSIS (TAB 2)")
 
-            global_imr_files = [
-                f"export_imr_global_{feat}.png" for feat in ['YS', 'TS', 'EL', 'YPE']
-                if os.path.exists(f"export_imr_global_{feat}.png")
+            global_imr_files = [f"export_imr_global_{feat}.png" for feat in ['YS', 'TS', 'EL', 'YPE'] if os.path.exists(f"export_imr_global_{feat}.png")]
+            if global_imr_files: add_images_to_pdf(pdf, global_imr_files, "4. GLOBAL PROCESS STABILITY - ALL SEVERE DEFECTS (TAB 3)")
+
+            filtered_imr_files = [f"export_imr_{feat}.png" for feat in ['YS', 'TS', 'EL', 'YPE'] if os.path.exists(f"export_imr_{feat}.png")]
+            if filtered_imr_files: add_images_to_pdf(pdf, filtered_imr_files, "5. SPECIFIC I-MR TRACKING - FILTERED SEGMENT (TAB 4)")
+
+            tab5_files = [
+                "export_tab5_scrap_by_period.png", 
+                "export_tab5_scrap_by_thickness.png", 
+                "export_tab5_scrap_by_material.png"
             ]
-            if global_imr_files:
-                add_images_to_pdf(
-                    pdf, global_imr_files,
-                    "4. GLOBAL PROCESS STABILITY - ALL SEVERE DEFECTS (TAB 3)"
-                )
-
-            filtered_imr_files = [
-                f"export_imr_{feat}.png" for feat in ['YS', 'TS', 'EL', 'YPE']
-                if os.path.exists(f"export_imr_{feat}.png")
-            ]
-            if filtered_imr_files:
-                add_images_to_pdf(
-                    pdf, filtered_imr_files,
-                    "5. SPECIFIC I-MR TRACKING - FILTERED SEGMENT (TAB 4)"
-                )
-
-            tab5_files = sorted([
-                f for f in os.listdir('.') if f.startswith("export_tab5_") and f.endswith(".png")
-            ])
-            if tab5_files:
-                add_images_to_pdf(pdf, tab5_files, "6. SCRAP ANALYSIS - COIL-ID AWARE (TAB 5)")
+            tab5_existing = [f for f in tab5_files if os.path.exists(f)]
+            if tab5_existing: add_images_to_pdf(pdf, tab5_existing, "6. TAIL SCRAP ANALYSIS (TAB 5)")
 
             pdf.output("Quality_Visual_Report.pdf")
             with open("Quality_Visual_Report.pdf", "rb") as f:
-                st.sidebar.download_button(
-                    label="✅ Click to Download PDF Report",
-                    data=f.read(),
-                    file_name="Quality_Visual_Report.pdf",
-                    mime="application/pdf"
-                )
+                st.sidebar.download_button(label="✅ Click to Download PDF Report", data=f.read(), file_name="Quality_Visual_Report.pdf", mime="application/pdf")
             st.sidebar.success("🎉 PDF Generated Successfully!")
-
         except Exception as e:
             st.sidebar.error(f"⚠️ Error generating PDF: {e}")
