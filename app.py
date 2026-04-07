@@ -372,8 +372,148 @@ if uploaded_file is not None:
                 mime="text/csv"
             )
 
-    # --- TAB 2: DISTRIBUTION ---
+    # ==========================================================
+    # TAB 2: DISTRIBUTION + Cp / Cpk / Ca
+    # ==========================================================
     with tab2:
+        # ----------------------------------------------------------
+        # CAPABILITY INDEX HELPERS
+        # ----------------------------------------------------------
+        def calc_capability(values, feat):
+            """
+            Return dict with mean, std, Cp, Cpk, Ca (None if spec missing).
+            Formula:
+              Ca  = (mean - target) / ((USL - LSL) / 2)   × 100%   [centering accuracy]
+              Cp  = (USL - LSL) / (6 × std)               [spread vs tolerance]
+              Cpk = min(CPU, CPL)
+                    CPU = (USL - mean) / (3 × std)
+                    CPL = (mean - LSL) / (3 × std)
+            For one-sided specs (EL, YPE) only CPL is computed; Cp = CPL.
+            """
+            vals = np.array(values, dtype=float)
+            vals = vals[~np.isnan(vals)]
+            if len(vals) < 2:
+                return None
+            mu  = np.mean(vals)
+            std = np.std(vals, ddof=1)
+            if std == 0:
+                return None
+ 
+            spec = GLOBAL_SPECS.get(feat, {})
+            lsl  = spec.get('min')
+            usl  = spec.get('max')
+            tgt  = spec.get('target')
+ 
+            result = {'mean': mu, 'std': std, 'n': len(vals),
+                      'Cp': None, 'Cpk': None, 'Ca': None,
+                      'LSL': lsl, 'USL': usl, 'Target': tgt}
+ 
+            if lsl is not None and usl is not None:
+                # Two-sided
+                cp   = (usl - lsl) / (6 * std)
+                cpu  = (usl - mu)  / (3 * std)
+                cpl  = (mu  - lsl) / (3 * std)
+                cpk  = min(cpu, cpl)
+                result['Cp']  = round(cp,  3)
+                result['Cpk'] = round(cpk, 3)
+                if tgt is not None:
+                    ca = (mu - tgt) / ((usl - lsl) / 2) * 100
+                    result['Ca'] = round(ca, 2)
+                else:
+                    mid = (usl + lsl) / 2
+                    ca  = (mu - mid) / ((usl - lsl) / 2) * 100
+                    result['Ca'] = round(ca, 2)
+            elif lsl is not None:
+                # One-sided lower (EL, YPE)
+                cpl = (mu - lsl) / (3 * std)
+                result['Cp']  = round(cpl, 3)
+                result['Cpk'] = round(cpl, 3)
+            elif usl is not None:
+                # One-sided upper
+                cpu = (usl - mu) / (3 * std)
+                result['Cp']  = round(cpu, 3)
+                result['Cpk'] = round(cpu, 3)
+ 
+            return result
+ 
+        def cpk_color(cpk):
+            """Traffic-light color for Cpk."""
+            if cpk is None: return '#888888'
+            if cpk >= 1.67: return '#2e7d32'   # excellent — dark green
+            if cpk >= 1.33: return '#66bb6a'   # capable — light green
+            if cpk >= 1.00: return '#ffa726'   # marginal — orange
+            return '#d62728'                   # not capable — red
+ 
+        def cpk_label(cpk):
+            if cpk is None: return 'N/A'
+            if cpk >= 1.67: return '✅ Excellent'
+            if cpk >= 1.33: return '✅ Capable'
+            if cpk >= 1.00: return '⚠️ Marginal'
+            return '❌ Not Capable'
+ 
+        def render_capability_badge(cap, feat):
+            """Render a compact colored HTML badge row below each chart."""
+            if cap is None:
+                return
+            cp_v   = f"{cap['Cp']:.3f}"   if cap['Cp']  is not None else 'N/A'
+            cpk_v  = f"{cap['Cpk']:.3f}"  if cap['Cpk'] is not None else 'N/A'
+            ca_v   = f"{cap['Ca']:.1f}%"  if cap['Ca']  is not None else 'N/A (no target)'
+            mu_v   = f"{cap['mean']:.2f}"
+            std_v  = f"{cap['std']:.3f}"
+            n_v    = str(cap['n'])
+            clr    = cpk_color(cap['Cpk'])
+            lbl    = cpk_label(cap['Cpk'])
+            spec   = GLOBAL_SPECS.get(feat, {})
+            lsl_v  = str(spec.get('min', '—'))
+            usl_v  = str(spec.get('max', '—'))
+ 
+            html_badge = f"""
+            <div style="background:#f8f9fa;border-left:5px solid {clr};
+                        border-radius:6px;padding:8px 14px;margin:4px 0 10px 0;
+                        font-family:monospace;font-size:13px;line-height:1.8;">
+              <span style="font-size:14px;font-weight:bold;color:{clr};">{lbl}</span>
+              &nbsp;&nbsp;|&nbsp;&nbsp;
+              <b>LSL</b>: {lsl_v} &nbsp; <b>USL</b>: {usl_v}
+              &nbsp;&nbsp;|&nbsp;&nbsp;
+              <b>n</b>: {n_v} &nbsp;
+              <b>Mean</b>: {mu_v} &nbsp;
+              <b>Std</b>: {std_v}
+              <br>
+              <b style="color:{clr};">Cpk = {cpk_v}</b>
+              &nbsp;&nbsp;
+              <b>Cp = {cp_v}</b>
+              &nbsp;&nbsp;
+              <b>Ca = {ca_v}</b>
+            </div>
+            """
+            st.markdown(html_badge, unsafe_allow_html=True)
+ 
+        # ----------------------------------------------------------
+        # Capability Summary Table — cross-period comparison
+        # ----------------------------------------------------------
+        def build_capability_summary(df_src, feat, label):
+            """Return one-row dict for the summary table."""
+            vals = df_src[feat].dropna().values if feat in df_src.columns else []
+            cap = calc_capability(vals, feat)
+            if cap is None:
+                return None
+            return {
+                'Period / Segment': label,
+                'Feature': feat,
+                'n': cap['n'],
+                'Mean': round(cap['mean'], 2),
+                'Std': round(cap['std'], 3),
+                'LSL': GLOBAL_SPECS.get(feat, {}).get('min'),
+                'USL': GLOBAL_SPECS.get(feat, {}).get('max'),
+                'Ca (%)': cap['Ca'],
+                'Cp': cap['Cp'],
+                'Cpk': cap['Cpk'],
+                'Verdict': cpk_label(cap['Cpk']).replace('✅ ', '').replace('⚠️ ', '').replace('❌ ', '')
+            }
+ 
+        # ----------------------------------------------------------
+        # X-axis bounds (global, consistent across all periods)
+        # ----------------------------------------------------------
         global_x_bounds = {}
         for feat in mech_features:
             if feat in df.columns:
@@ -381,8 +521,8 @@ if uploaded_file is not None:
                 vd = vd[vd['Total_Qty'] > 0]
                 if not vd.empty:
                     q1, q99 = np.percentile(vd[feat], 1), np.percentile(vd[feat], 99)
-                    global_x_bounds[feat] = (q1 - (q99-q1)*0.25, q99 + (q99-q1)*0.25)
-
+                    global_x_bounds[feat] = (q1 - (q99 - q1) * 0.25, q99 + (q99 - q1) * 0.25)
+ 
         def get_shared_y(data, features):
             max_y = 0
             for feat in features:
@@ -392,12 +532,16 @@ if uploaded_file is not None:
                         cnts, _ = np.histogram(vd[feat], bins=15, weights=vd['Total_Qty'])
                         max_y = max(max_y, cnts.max())
             return max_y * 1.35 if max_y > 0 else 50
-
+ 
         def plot_dist(ax, data, feat, title, y_lim):
+            """Histogram stacked by grade + mean vlines + Cp/Cpk/Ca spec lines."""
             c_map = {
                 'A-B+': '#2ca02c', 'A-B': '#1f77b4',
                 'A-B-': '#ff7f0e', 'B+': '#9467bd', 'B': '#d62728'
             }
+            spec = GLOBAL_SPECS.get(feat, {})
+            lsl, usl, tgt = spec.get('min'), spec.get('max'), spec.get('target')
+ 
             fmin, fmax = global_x_bounds.get(feat, (
                 data[feat].min() if not data.empty else 0,
                 data[feat].max() if not data.empty else 100
@@ -413,50 +557,53 @@ if uploaded_file is not None:
                     m = np.average(td[feat].values, weights=td[g].values)
                     ax.axvline(m, color=c_map[g], ls='--', lw=1.2)
                     m_info.append({'v': m, 'c': c_map[g], 'label': g})
-
+ 
             if v_l:
                 ax.hist(v_l, bins=np.linspace(fmin, fmax, 16), weights=w_l, color=clrs,
                         stacked=True, edgecolor='white', alpha=0.7)
-
                 m_info.sort(key=lambda x: x['v'])
                 x_range = fmax - fmin
                 min_gap = x_range * 0.045
-
                 positions = [info['v'] for info in m_info]
                 for _ in range(50):
                     moved = False
                     for i in range(1, len(positions)):
-                        if positions[i] - positions[i-1] < min_gap:
-                            mid = (positions[i] + positions[i-1]) / 2
-                            positions[i-1] = mid - min_gap / 2
+                        if positions[i] - positions[i - 1] < min_gap:
+                            mid = (positions[i] + positions[i - 1]) / 2
+                            positions[i - 1] = mid - min_gap / 2
                             positions[i] = mid + min_gap / 2
                             moved = True
                     if not moved:
                         break
-
                 y_levels = [y_lim * (0.92 - (i % 4) * 0.13) for i in range(len(m_info))]
-
                 for i, info in enumerate(m_info):
                     x_pos = positions[i]
                     y_pos = y_levels[i]
                     ax.annotate(
                         f"{info['v']:.1f}",
-                        xy=(info['v'], y_pos * 0.6),
-                        xytext=(x_pos, y_pos),
-                        color='white',
-                        fontweight='bold',
-                        fontsize=8,
-                        ha='center',
-                        va='center',
+                        xy=(info['v'], y_pos * 0.6), xytext=(x_pos, y_pos),
+                        color='white', fontweight='bold', fontsize=8,
+                        ha='center', va='center',
                         bbox=dict(facecolor=info['c'], alpha=0.85, boxstyle='round,pad=0.25'),
-                        arrowprops=dict(
-                            arrowstyle='-',
-                            color=info['c'],
-                            lw=1.0,
-                            alpha=0.6
-                        ) if abs(x_pos - info['v']) > min_gap * 0.3 else None
+                        arrowprops=dict(arrowstyle='-', color=info['c'], lw=1.0, alpha=0.6)
+                        if abs(x_pos - info['v']) > min_gap * 0.3 else None
                     )
-
+ 
+            # --- Draw spec lines (LSL / USL / Target) ---
+            y_top = y_lim * 0.98
+            if lsl is not None:
+                ax.axvline(lsl, color='red', lw=2, ls='-', zorder=3)
+                ax.text(lsl, y_top, f' LSL\n {lsl}', color='red',
+                        fontsize=7.5, fontweight='bold', va='top', ha='left')
+            if usl is not None:
+                ax.axvline(usl, color='red', lw=2, ls='-', zorder=3)
+                ax.text(usl, y_top, f' USL\n {usl}', color='red',
+                        fontsize=7.5, fontweight='bold', va='top', ha='right')
+            if tgt is not None:
+                ax.axvline(tgt, color='#1a7abf', lw=1.5, ls=':', zorder=3)
+                ax.text(tgt, y_top * 0.75, f' TGT\n {tgt}', color='#1a7abf',
+                        fontsize=7, fontweight='bold', va='top', ha='left')
+ 
             ax.legend(
                 handles=[Patch(facecolor=c_map[g], label=g) for g in base_grades if g in data.columns],
                 loc='upper right', fontsize=7
@@ -464,7 +611,80 @@ if uploaded_file is not None:
             ax.set_xlim(fmin, fmax)
             ax.set_ylim(0, y_lim)
             ax.set_title(title, fontsize=10, fontweight='bold')
-
+ 
+        # ----------------------------------------------------------
+        # Build cross-period capability summary (all periods × all feats)
+        # ----------------------------------------------------------
+        cap_summary_rows = []
+        for _p in selected_periods:
+            _dfp = df_filtered[df_filtered['Time_Group'] == _p]
+            for _f in ['YS', 'TS', 'EL', 'YPE']:
+                row = build_capability_summary(_dfp, _f, _p)
+                if row:
+                    cap_summary_rows.append(row)
+ 
+        # ----------------------------------------------------------
+        # Cross-period Capability Summary Table (pinned at top)
+        # ----------------------------------------------------------
+        if cap_summary_rows:
+            st.subheader("📊 Process Capability Summary (All Selected Periods)")
+            st.caption(
+                "**Cp** = spread capability (tolerance / 6σ) | "
+                "**Cpk** = centred capability (worst-side) | "
+                "**Ca** = centering accuracy (0% = perfectly centred). "
+                "Cpk ≥ 1.67 ✅ Excellent | ≥ 1.33 ✅ Capable | ≥ 1.00 ⚠️ Marginal | < 1.00 ❌ Not Capable"
+            )
+            cap_df = pd.DataFrame(cap_summary_rows)
+ 
+            def color_cpk_cell(val):
+                if pd.isna(val): return ''
+                c = cpk_color(val)
+                return f'background-color:{c};color:white;font-weight:bold;text-align:center'
+ 
+            def color_ca_cell(val):
+                if pd.isna(val): return ''
+                av = abs(val)
+                if av <= 12.5: clr = '#2e7d32'
+                elif av <= 25:  clr = '#ffa726'
+                else:           clr = '#d62728'
+                return f'color:{clr};font-weight:bold;text-align:center'
+ 
+            fmt = {
+                'Mean': '{:.2f}', 'Std': '{:.3f}',
+                'Cp': '{:.3f}', 'Cpk': '{:.3f}',
+                'Ca (%)': lambda v: f'{v:.1f}%' if pd.notnull(v) else '—',
+                'LSL': lambda v: str(int(v)) if pd.notnull(v) else '—',
+                'USL': lambda v: str(int(v)) if pd.notnull(v) else '—',
+            }
+            styled = (
+                cap_df.style
+                .map(color_cpk_cell, subset=['Cpk'])
+                .map(color_ca_cell,  subset=['Ca (%)'])
+                .background_gradient(subset=['Cp'], cmap='RdYlGn', vmin=0.67, vmax=2.0)
+                .format(fmt, na_rep='—')
+            )
+            st.dataframe(styled, use_container_width=True, hide_index=True)
+ 
+            # Download capability summary
+            cap_xlsx = io.BytesIO()
+            try:
+                with pd.ExcelWriter(cap_xlsx, engine='xlsxwriter') as _w:
+                    cap_df.to_excel(_w, index=False, sheet_name='Capability_Summary')
+                st.download_button(
+                    label="📥 Download Capability Summary Excel",
+                    data=cap_xlsx.getvalue(),
+                    file_name="Capability_Summary.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+            except Exception:
+                pass
+ 
+            st.markdown("---")
+ 
+        # ----------------------------------------------------------
+        # Per-period distribution charts WITH inline Cp/Cpk/Ca badge
+        # ----------------------------------------------------------
+        tab2_saved_files = []
         for period in selected_periods:
             df_p = df_filtered[df_filtered['Time_Group'] == period]
             if df_p.empty:
@@ -479,25 +699,33 @@ if uploaded_file is not None:
                     plot_dist(ax, df_p, f, f"{f} (Overall - {period})", ov_y)
                     fname = f"export_tab2_{safe_period}_overall_{f}.png"
                     plt.savefig(fname, bbox_inches='tight', dpi=150)
+                    tab2_saved_files.append(fname)
                     st.pyplot(fig)
                     plt.close(fig)
-
+                    # --- Capability badge ---
+                    vals_all = df_p[f].dropna().values if f in df_p.columns else []
+                    render_capability_badge(calc_capability(vals_all, f), f)
+ 
             for thick in thickness_list:
                 df_t = df_p[df_p['Actual_Thickness'] == thick]
                 if df_t.empty:
                     continue
-                st.markdown(f"**📏 Thickness: {thick}**")
+                st.markdown(f"**📏 Thickness: {thick}mm**")
                 ly = get_shared_y(df_t, ['YS', 'TS', 'EL', 'YPE'])
                 tcols = st.columns(2)
                 for idx, f in enumerate([x for x in ['YS', 'TS', 'EL', 'YPE'] if x in df_t.columns]):
                     with tcols[idx % 2]:
                         fig, ax = plt.subplots(figsize=(8, 4.5))
-                        plot_dist(ax, df_t, f, f"{f} (Thick: {thick} - {period})", ly)
-                        fname = f"export_tab2_{safe_period}_t{str(thick).replace('.','p')}_{f}.png"
+                        plot_dist(ax, df_t, f, f"{f} (Thick:{thick} - {period})", ly)
+                        fname = f"export_tab2_{safe_period}_t{str(thick).replace('.', 'p')}_{f}.png"
                         plt.savefig(fname, bbox_inches='tight', dpi=150)
+                        tab2_saved_files.append(fname)
                         st.pyplot(fig)
                         plt.close(fig)
-
+                        # --- Capability badge ---
+                        vals_t = df_t[f].dropna().values if f in df_t.columns else []
+                        render_capability_badge(calc_capability(vals_t, f), f)
+ 
     # --- TAB 3: ROOT CAUSE & DIAGNOSTIC ---
     with tab3:
         st.header("🧠 Executive Auto-Insight & Root Cause")
