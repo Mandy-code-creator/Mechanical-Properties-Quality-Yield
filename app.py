@@ -373,7 +373,7 @@ if uploaded_file is not None:
             )
 
     # ==========================================================
-    # TAB 2: DISTRIBUTION + Cp / Cpk / Ca
+   # --- TAB 2: DISTRIBUTION + Cp / Cpk / Ca ---
     # ==========================================================
     with tab2:
         # ----------------------------------------------------------
@@ -384,7 +384,7 @@ if uploaded_file is not None:
             Return dict with mean, std, Cp, Cpk, Ca (None if spec missing).
             Formula:
               Ca  = (mean - target) / ((USL - LSL) / 2)   × 100%   [centering accuracy]
-              Cp  = (USL - LSL) / (6 × std)               [spread vs tolerance]
+              Cp  = (USL - LSL) / (6 × std)                [spread vs tolerance]
               Cpk = min(CPU, CPL)
                     CPU = (USL - mean) / (3 × std)
                     CPL = (mean - LSL) / (3 × std)
@@ -398,16 +398,16 @@ if uploaded_file is not None:
             std = np.std(vals, ddof=1)
             if std == 0:
                 return None
- 
+
             spec = GLOBAL_SPECS.get(feat, {})
             lsl  = spec.get('min')
             usl  = spec.get('max')
             tgt  = spec.get('target')
- 
+
             result = {'mean': mu, 'std': std, 'n': len(vals),
                       'Cp': None, 'Cpk': None, 'Ca': None,
                       'LSL': lsl, 'USL': usl, 'Target': tgt}
- 
+
             if lsl is not None and usl is not None:
                 # Two-sided
                 cp   = (usl - lsl) / (6 * std)
@@ -433,9 +433,9 @@ if uploaded_file is not None:
                 cpu = (usl - mu) / (3 * std)
                 result['Cp']  = round(cpu, 3)
                 result['Cpk'] = round(cpu, 3)
- 
+
             return result
- 
+
         def cpk_color(cpk):
             """Traffic-light color for Cpk."""
             if cpk is None: return '#888888'
@@ -443,14 +443,14 @@ if uploaded_file is not None:
             if cpk >= 1.33: return '#66bb6a'   # capable — light green
             if cpk >= 1.00: return '#ffa726'   # marginal — orange
             return '#d62728'                   # not capable — red
- 
+
         def cpk_label(cpk):
             if cpk is None: return 'N/A'
             if cpk >= 1.67: return '✅ Excellent'
             if cpk >= 1.33: return '✅ Capable'
             if cpk >= 1.00: return '⚠️ Marginal'
             return '❌ Not Capable'
- 
+
         def render_capability_badge(cap, feat):
             """Render a compact colored HTML badge row below each chart."""
             if cap is None:
@@ -466,7 +466,7 @@ if uploaded_file is not None:
             spec   = GLOBAL_SPECS.get(feat, {})
             lsl_v  = str(spec.get('min', '—'))
             usl_v  = str(spec.get('max', '—'))
- 
+
             html_badge = f"""
             <div style="background:#f8f9fa;border-left:5px solid {clr};
                         border-radius:6px;padding:8px 14px;margin:4px 0 10px 0;
@@ -487,7 +487,7 @@ if uploaded_file is not None:
             </div>
             """
             st.markdown(html_badge, unsafe_allow_html=True)
- 
+
         # ----------------------------------------------------------
         # Capability Summary Table — cross-period comparison
         # ----------------------------------------------------------
@@ -510,7 +510,7 @@ if uploaded_file is not None:
                 'Cpk': cap['Cpk'],
                 'Verdict': cpk_label(cap['Cpk']).replace('✅ ', '').replace('⚠️ ', '').replace('❌ ', '')
             }
- 
+
         # ----------------------------------------------------------
         # X-axis bounds (global, consistent across all periods)
         # ----------------------------------------------------------
@@ -522,7 +522,7 @@ if uploaded_file is not None:
                 if not vd.empty:
                     q1, q99 = np.percentile(vd[feat], 1), np.percentile(vd[feat], 99)
                     global_x_bounds[feat] = (q1 - (q99 - q1) * 0.25, q99 + (q99 - q1) * 0.25)
- 
+
         def get_shared_y(data, features):
             max_y = 0
             for feat in features:
@@ -532,7 +532,7 @@ if uploaded_file is not None:
                         cnts, _ = np.histogram(vd[feat], bins=15, weights=vd['Total_Qty'])
                         max_y = max(max_y, cnts.max())
             return max_y * 1.35 if max_y > 0 else 50
- 
+
         def plot_dist(ax, data, feat, title, y_lim):
             """Histogram stacked by grade + mean vlines + Cp/Cpk/Ca spec lines."""
             c_map = {
@@ -541,7 +541,7 @@ if uploaded_file is not None:
             }
             spec = GLOBAL_SPECS.get(feat, {})
             lsl, usl, tgt = spec.get('min'), spec.get('max'), spec.get('target')
- 
+
             fmin, fmax = global_x_bounds.get(feat, (
                 data[feat].min() if not data.empty else 0,
                 data[feat].max() if not data.empty else 100
@@ -557,7 +557,7 @@ if uploaded_file is not None:
                     m = np.average(td[feat].values, weights=td[g].values)
                     ax.axvline(m, color=c_map[g], ls='--', lw=1.2)
                     m_info.append({'v': m, 'c': c_map[g], 'label': g})
- 
+
             if v_l:
                 ax.hist(v_l, bins=np.linspace(fmin, fmax, 16), weights=w_l, color=clrs,
                         stacked=True, edgecolor='white', alpha=0.7)
@@ -588,7 +588,7 @@ if uploaded_file is not None:
                         arrowprops=dict(arrowstyle='-', color=info['c'], lw=1.0, alpha=0.6)
                         if abs(x_pos - info['v']) > min_gap * 0.3 else None
                     )
- 
+
             # --- Draw spec lines (LSL / USL / Target) ---
             y_top = y_lim * 0.98
             if lsl is not None:
@@ -603,7 +603,7 @@ if uploaded_file is not None:
                 ax.axvline(tgt, color='#1a7abf', lw=1.5, ls=':', zorder=3)
                 ax.text(tgt, y_top * 0.75, f' TGT\n {tgt}', color='#1a7abf',
                         fontsize=7, fontweight='bold', va='top', ha='left')
- 
+
             ax.legend(
                 handles=[Patch(facecolor=c_map[g], label=g) for g in base_grades if g in data.columns],
                 loc='upper right', fontsize=7
@@ -611,7 +611,7 @@ if uploaded_file is not None:
             ax.set_xlim(fmin, fmax)
             ax.set_ylim(0, y_lim)
             ax.set_title(title, fontsize=10, fontweight='bold')
- 
+
         # ----------------------------------------------------------
         # Build cross-period capability summary (all periods × all feats)
         # ----------------------------------------------------------
@@ -622,10 +622,8 @@ if uploaded_file is not None:
                 row = build_capability_summary(_dfp, _f, _p)
                 if row:
                     cap_summary_rows.append(row)
- 
+
         # ----------------------------------------------------------
-        # ----------------------------------------------------------
-       # ----------------------------------------------------------
         # Cross-period Capability Summary Table (pinned at top)
         # ----------------------------------------------------------
         if cap_summary_rows:
@@ -639,7 +637,7 @@ if uploaded_file is not None:
             cap_df = pd.DataFrame(cap_summary_rows)
 
             # ==========================================================
-            # BẢNG TỔNG HỢP SO SÁNH CHÉO (GỘP CHUNG CP, CPK, CA)
+            # CROSS-PERIOD COMPARISON MATRIX (CPK, CP, CA)
             # ==========================================================
             st.markdown("### 🔄 Cross-Period Comparison (Cpk, Cp, Ca Trend)")
             
@@ -659,7 +657,7 @@ if uploaded_file is not None:
             if trend_data:
                 trend_df = pd.DataFrame(trend_data).set_index('Period')
                 
-                # Hàm tô màu tự động cho toàn bộ bảng
+                # Auto-color formatting for the matrix
                 def style_trend_table(df):
                     styles = pd.DataFrame('', index=df.index, columns=df.columns)
                     for r_idx in df.index:
@@ -667,21 +665,21 @@ if uploaded_file is not None:
                             val = df.at[r_idx, c]
                             if pd.isna(val): continue
                             
-                            # Tô nền cho Cpk (Quan trọng nhất)
+                            # Cpk Background coloring
                             if "Cpk" in c:
                                 if val >= 1.67: styles.at[r_idx, c] = 'background-color: #2e7d32; color: white; font-weight: bold;'
                                 elif val >= 1.33: styles.at[r_idx, c] = 'background-color: #66bb6a; color: white; font-weight: bold;'
                                 elif val >= 1.00: styles.at[r_idx, c] = 'background-color: #ffa726; color: black; font-weight: bold;'
                                 else: styles.at[r_idx, c] = 'background-color: #d62728; color: white; font-weight: bold;'
                             
-                            # Tô chữ cho Cp
+                            # Cp Text coloring
                             elif "Cp" in c:
                                 if val >= 1.67: styles.at[r_idx, c] = 'color: #2e7d32; font-weight: bold;'
                                 elif val >= 1.33: styles.at[r_idx, c] = 'color: #66bb6a; font-weight: bold;'
                                 elif val >= 1.00: styles.at[r_idx, c] = 'color: #ffa726; font-weight: bold;'
                                 else: styles.at[r_idx, c] = 'color: #d62728; font-weight: bold;'
                             
-                            # Tô chữ cho Ca (%)
+                            # Ca (%) Text coloring
                             elif "Ca" in c:
                                 av = abs(val)
                                 if av <= 12.5: styles.at[r_idx, c] = 'color: #2e7d32; font-weight: bold;'
@@ -690,13 +688,13 @@ if uploaded_file is not None:
                                 
                     return styles
                 
-                # Format số thập phân
+                # Decimal formatting
                 format_dict = {c: "{:.1f}%" if "Ca" in c else "{:.3f}" for c in trend_df.columns}
                 styled_trend = trend_df.style.apply(style_trend_table, axis=None).format(format_dict, na_rep="—")
                 st.dataframe(styled_trend, use_container_width=True)
 
                 # ==========================================================
-                # HỆ THỐNG AUTO-CONCLUSION (KẾT LUẬN TỰ ĐỘNG)
+                # AUTOMATED TREND CONCLUSION
                 # ==========================================================
                 st.markdown("#### 💡 Automated Trend Conclusion")
                 periods_list = trend_df.index.tolist()
@@ -715,23 +713,23 @@ if uploaded_file is not None:
                             
                             diff = val_last - val_first
                             
-                            # Đánh giá xu hướng
-                            if diff >= 0.05: trend_status = "📈 **Cải thiện** (Tăng)"
-                            elif diff <= -0.05: trend_status = "📉 **Suy giảm** (Giảm)"
-                            else: trend_status = "➡️ **Ổn định** (Đi ngang)"
+                            # Trend evaluation
+                            if diff >= 0.05: trend_status = "📈 **Improving**"
+                            elif diff <= -0.05: trend_status = "📉 **Declining**"
+                            else: trend_status = "➡️ **Stable**"
                             
-                            # Đánh giá rủi ro hiện tại
-                            if val_last >= 1.33: risk_status = "✅ **An Toàn** (Capable)"
-                            elif val_last >= 1.00: risk_status = "⚠️ **Cảnh báo** (Marginal)"
-                            else: risk_status = "❌ **Nguy hiểm** (Not Capable)"
+                            # Risk evaluation
+                            if val_last >= 1.33: risk_status = "✅ **Safe** (Capable)"
+                            elif val_last >= 1.00: risk_status = "⚠️ **Warning** (Marginal)"
+                            else: risk_status = "❌ **Danger** (Not Capable)"
                             
-                            st.info(f"**{feat}:** So với giai đoạn [{first_p}], năng lực (Cpk) trong giai đoạn [{last_p}] đã chuyển từ **{val_first:.2f}** sang **{val_last:.2f}** ➔ Xu hướng: {trend_status}. Trạng thái hiện tại: {risk_status}.")
+                            st.info(f"**{feat}:** Compared to [{first_p}], the capability (Cpk) in [{last_p}] shifted from **{val_first:.2f}** to **{val_last:.2f}** ➔ Trend: {trend_status}. Current Status: {risk_status}.")
                 else:
-                    st.caption("ℹ️ Vui lòng chọn ít nhất 2 khoảng thời gian ở thanh bộ lọc (Filter) bên trái để hệ thống có thể so sánh và kết luận xu hướng.")
+                    st.caption("ℹ️ Please select at least 2 periods in the sidebar filter to enable automated trend comparison.")
 
             st.markdown("### 📋 Detailed Capability Log")
             # ==========================================================
-            # BẢNG CHI TIẾT NHẬT KÝ (LOG) BÊN DƯỚI
+            # DETAILED CAPABILITY LOG BELOW
             # ==========================================================
             def color_cpk_cell(val):
                 if pd.isna(val): return ''
@@ -780,74 +778,7 @@ if uploaded_file is not None:
                 pass
 
             st.markdown("---")
-            # ==========================================================
-            # BẢNG CHI TIẾT CŨ BÊN DƯỚI
-            # ==========================================================
-            def color_cpk_cell(val):
-                if pd.isna(val): return ''
-                c = cpk_color(val)
-                return f'background-color:{c};color:white;font-weight:bold;text-align:center'
 
-            def color_ca_cell(val):
-                if pd.isna(val): return ''
-                av = abs(val)
-                if av <= 12.5: clr = '#2e7d32'
-                elif av <= 25:  clr = '#ffa726'
-                else:           clr = '#d62728'
-                return f'color:{clr};font-weight:bold;text-align:center'
-
-            fmt = {
-                'Mean': '{:.2f}', 'Std': '{:.3f}',
-                'Cp': '{:.3f}', 'Cpk': '{:.3f}',
-                'Ca (%)': lambda v: f'{v:.1f}%' if pd.notnull(v) else '—',
-                'LSL': lambda v: str(int(v)) if pd.notnull(v) else '—',
-                'USL': lambda v: str(int(v)) if pd.notnull(v) else '—',
-            }
-            styled = (
-                cap_df.style
-                .map(color_cpk_cell, subset=['Cpk'])
-                .map(color_ca_cell,  subset=['Ca (%)'])
-                .background_gradient(subset=['Cp'], cmap='RdYlGn', vmin=0.67, vmax=2.0)
-                .format(fmt, na_rep='—')
-            )
-            st.dataframe(styled, use_container_width=True, hide_index=True)
-
-            # Download capability summary
-            cap_xlsx = io.BytesIO()
-            try:
-                with pd.ExcelWriter(cap_xlsx, engine='xlsxwriter') as _w:
-                    cap_df.to_excel(_w, index=False, sheet_name='Capability_Summary')
-                    # Bổ sung xuất cả bảng Pivot ra Excel cho tiện report
-                    pivot_cpk.to_excel(_w, sheet_name='Cpk_Trend')
-                    pivot_cp.to_excel(_w, sheet_name='Cp_Trend')
-                
-                st.download_button(
-                    label="📥 Download Capability Summary & Trends (Excel)",
-                    data=cap_xlsx.getvalue(),
-                    file_name="Capability_Summary_Trends.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-            except Exception:
-                pass
-
-            st.markdown("---")
- 
-            # Download capability summary
-            cap_xlsx = io.BytesIO()
-            try:
-                with pd.ExcelWriter(cap_xlsx, engine='xlsxwriter') as _w:
-                    cap_df.to_excel(_w, index=False, sheet_name='Capability_Summary')
-                st.download_button(
-                    label="📥 Download Capability Summary Excel",
-                    data=cap_xlsx.getvalue(),
-                    file_name="Capability_Summary.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-            except Exception:
-                pass
- 
-            st.markdown("---")
- 
         # ----------------------------------------------------------
         # Per-period distribution charts WITH inline Cp/Cpk/Ca badge
         # ----------------------------------------------------------
@@ -872,7 +803,7 @@ if uploaded_file is not None:
                     # --- Capability badge ---
                     vals_all = df_p[f].dropna().values if f in df_p.columns else []
                     render_capability_badge(calc_capability(vals_all, f), f)
- 
+
             for thick in thickness_list:
                 df_t = df_p[df_p['Actual_Thickness'] == thick]
                 if df_t.empty:
