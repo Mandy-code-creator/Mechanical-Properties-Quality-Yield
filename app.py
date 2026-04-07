@@ -973,67 +973,7 @@ if uploaded_file is not None:
             plt.savefig("export_tab5_scrap_by_material.png", bbox_inches='tight', dpi=150)
             st.pyplot(fig3)
             plt.close(fig3)
-
-            # --- SECTION 3: RAW vs CORRECTED ---
-            st.markdown("---")
-            st.subheader("🔍 Section 3: Impact of Coil-ID Fix (Raw vs Corrected)")
-            st.caption(
-                "A higher corrected rate = the raw method was undercounting "
-                "(mẫu số bị phồng do cộng dồn chiều dài các lần chạy lại)."
-            )
-
-            raw_by_period = (
-                df_scrap_raw.groupby('Time_Group')
-                .apply(lambda x: x[col_scrap].sum() / x[col_length].sum() * 100
-                       if x[col_length].sum() > 0 else 0)
-                .reset_index()
-            )
-            raw_by_period.columns = ['Time_Group', 'Scrap_Rate_Raw (%)']
-
-            corrected_by_period = scrap_by_period[['Time Period', 'Scrap_Rate (%)']].rename(
-                columns={'Time Period': 'Time_Group', 'Scrap_Rate (%)': 'Scrap_Rate_Corrected (%)'}
-            )
-            compare_df = raw_by_period.merge(corrected_by_period, on='Time_Group', how='outer')
-            compare_df['Difference (pp)'] = (
-                compare_df['Scrap_Rate_Corrected (%)'] - compare_df['Scrap_Rate_Raw (%)']
-            ).round(3)
-            compare_df['Sort_Key'] = compare_df['Time_Group'].map(time_order_map).fillna(99)
-            compare_df = compare_df.sort_values('Sort_Key').drop(columns=['Sort_Key'])
-
-            def highlight_diff(val):
-                if pd.isna(val): return ''
-                if val > 0.5: return 'color: #c00000; font-weight: bold'
-                if val > 0.1: return 'color: #e06000; font-weight: bold'
-                return 'color: #2e7d32'
-
-            st.dataframe(
-                compare_df.style
-                    .map(highlight_diff, subset=['Difference (pp)'])
-                    .format({
-                        'Scrap_Rate_Raw (%)': '{:.3f}%',
-                        'Scrap_Rate_Corrected (%)': '{:.3f}%',
-                        'Difference (pp)': '{:+.3f}'
-                    }),
-                use_container_width=True, hide_index=True
-            )
-
-            fig4, ax4 = plt.subplots(figsize=(11, 4))
-            x = np.arange(len(compare_df))
-            w = 0.35
-            ax4.bar(x - w / 2, compare_df['Scrap_Rate_Raw (%)'],
-                    width=w, label='Raw (old method)', color='#9ecae1', edgecolor='white')
-            ax4.bar(x + w / 2, compare_df['Scrap_Rate_Corrected (%)'],
-                    width=w, label='Corrected (Coil-ID aware)', color='#d62728', edgecolor='white')
-            ax4.set_xticks(x)
-            ax4.set_xticklabels(compare_df['Time_Group'], rotation=20, ha='right')
-            ax4.set_ylabel("Scrap Rate (%)")
-            ax4.set_title("Raw vs Corrected Scrap Rate by Period", fontweight='bold', fontsize=13)
-            ax4.legend()
-            fig4.tight_layout()
-            plt.savefig("export_tab5_comparison.png", bbox_inches='tight', dpi=150)
-            st.pyplot(fig4)
-            plt.close(fig4)
-
+            
             # --- DOWNLOAD ---
             st.markdown("---")
             output_scrap = io.BytesIO()
