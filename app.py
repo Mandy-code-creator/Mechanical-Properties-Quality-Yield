@@ -624,6 +624,7 @@ if uploaded_file is not None:
                     cap_summary_rows.append(row)
  
         # ----------------------------------------------------------
+        # ----------------------------------------------------------
         # Cross-period Capability Summary Table (pinned at top)
         # ----------------------------------------------------------
         if cap_summary_rows:
@@ -635,12 +636,55 @@ if uploaded_file is not None:
                 "Cpk ≥ 1.67 ✅ Excellent | ≥ 1.33 ✅ Capable | ≥ 1.00 ⚠️ Marginal | < 1.00 ❌ Not Capable"
             )
             cap_df = pd.DataFrame(cap_summary_rows)
- 
+
+            # ==========================================================
+            # MỚI: BẢNG PIVOT SO SÁNH CHÉO XU HƯỚNG QUA CÁC THỜI KỲ
+            # ==========================================================
+            st.markdown("### 🔄 Cross-Period Comparison (Trend Analysis)")
+            tab_cpk, tab_cp, tab_ca = st.tabs(["🏆 Cpk Trend", "📏 Cp Trend", "🎯 Ca (%) Trend"])
+
+            def make_pivot(df, val_col):
+                # Tạo bảng chéo: Hàng là Cơ tính (TS, YS...), Cột là Thời gian
+                pivot = df.pivot(index='Feature', columns='Period / Segment', values=val_col)
+                # Giữ đúng thứ tự các móc thời gian đã chọn trên Sidebar
+                ordered_cols = [p for p in selected_periods if p in pivot.columns]
+                return pivot[ordered_cols]
+
+            with tab_cpk:
+                pivot_cpk = make_pivot(cap_df, 'Cpk')
+                def color_cpk_pivot(val):
+                    if pd.isna(val): return ''
+                    if val >= 1.67: return 'background-color: #2e7d32; color: white; font-weight: bold;'
+                    if val >= 1.33: return 'background-color: #66bb6a; color: white; font-weight: bold;'
+                    if val >= 1.00: return 'background-color: #ffa726; color: black; font-weight: bold;'
+                    return 'background-color: #d62728; color: white; font-weight: bold;'
+                
+                st.dataframe(pivot_cpk.style.map(color_cpk_pivot).format("{:.3f}", na_rep="—"), use_container_width=True)
+
+            with tab_cp:
+                pivot_cp = make_pivot(cap_df, 'Cp')
+                st.dataframe(pivot_cp.style.background_gradient(cmap='RdYlGn', vmin=0.67, vmax=2.0).format("{:.3f}", na_rep="—"), use_container_width=True)
+
+            with tab_ca:
+                pivot_ca = make_pivot(cap_df, 'Ca (%)')
+                def color_ca_pivot(val):
+                    if pd.isna(val): return ''
+                    av = abs(val)
+                    if av <= 12.5: return 'color: #2e7d32; font-weight: bold;'
+                    if av <= 25.0: return 'color: #ffa726; font-weight: bold;'
+                    return 'color: #d62728; font-weight: bold;'
+                
+                st.dataframe(pivot_ca.style.map(color_ca_pivot).format("{:.1f}%", na_rep="—"), use_container_width=True)
+
+            st.markdown("### 📋 Detailed Capability Log")
+            # ==========================================================
+            # BẢNG CHI TIẾT CŨ BÊN DƯỚI
+            # ==========================================================
             def color_cpk_cell(val):
                 if pd.isna(val): return ''
                 c = cpk_color(val)
                 return f'background-color:{c};color:white;font-weight:bold;text-align:center'
- 
+
             def color_ca_cell(val):
                 if pd.isna(val): return ''
                 av = abs(val)
@@ -648,7 +692,7 @@ if uploaded_file is not None:
                 elif av <= 25:  clr = '#ffa726'
                 else:           clr = '#d62728'
                 return f'color:{clr};font-weight:bold;text-align:center'
- 
+
             fmt = {
                 'Mean': '{:.2f}', 'Std': '{:.3f}',
                 'Cp': '{:.3f}', 'Cpk': '{:.3f}',
@@ -664,6 +708,26 @@ if uploaded_file is not None:
                 .format(fmt, na_rep='—')
             )
             st.dataframe(styled, use_container_width=True, hide_index=True)
+
+            # Download capability summary
+            cap_xlsx = io.BytesIO()
+            try:
+                with pd.ExcelWriter(cap_xlsx, engine='xlsxwriter') as _w:
+                    cap_df.to_excel(_w, index=False, sheet_name='Capability_Summary')
+                    # Bổ sung xuất cả bảng Pivot ra Excel cho tiện report
+                    pivot_cpk.to_excel(_w, sheet_name='Cpk_Trend')
+                    pivot_cp.to_excel(_w, sheet_name='Cp_Trend')
+                
+                st.download_button(
+                    label="📥 Download Capability Summary & Trends (Excel)",
+                    data=cap_xlsx.getvalue(),
+                    file_name="Capability_Summary_Trends.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+            except Exception:
+                pass
+
+            st.markdown("---")
  
             # Download capability summary
             cap_xlsx = io.BytesIO()
