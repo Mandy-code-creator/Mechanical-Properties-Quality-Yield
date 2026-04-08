@@ -995,7 +995,8 @@ if uploaded_file is not None:
         render_tab4()
 
     # ==========================================================
-    # TAB 5: TAIL SCRAP ANALYSIS (COIL-ID AWARE)
+   # ==========================================================
+    # --- TAB 5: TAIL SCRAP ANALYSIS (COIL-ID AWARE) ---
     # ==========================================================
     with tab5:
         st.header("5. Tail Scrap & Length Rejection Analysis")
@@ -1003,8 +1004,8 @@ if uploaded_file is not None:
             "Analysis of tail scrap rejection rate based on 實測長度 (Measured Length) "
             "and 尾料剔退 (Tail Scrap Rejected).\n\n"
             "⚙️ **Coil-ID Aware Logic:** A coil running through the line multiple times "
-            "is handled correctly — **original length** (first pass) as base, "
-            "**all scrap cuts summed** across every pass."
+            "is handled correctly. **Total Length** is based on the FIRST pass of ALL coils "
+            "(including those with zero scrap). **Total Scrap** is the sum across all passes."
         )
 
         col_length = '實測長度'
@@ -1015,204 +1016,53 @@ if uploaded_file is not None:
             st.error(f"Missing columns: {missing}. Please check your data file.")
         else:
             # ----------------------------------------------------------------
-            # PRE-PROCESS: numeric conversion on a working copy
+            # 1. PRE-PROCESS: Convert to numeric and filter valid Coil IDs
             # ----------------------------------------------------------------
             df_scrap_all = df_filtered.copy()
             df_scrap_all[col_length] = pd.to_numeric(df_scrap_all[col_length], errors='coerce')
             df_scrap_all[col_scrap]  = pd.to_numeric(df_scrap_all[col_scrap],  errors='coerce')
+            
+            # Giữ lại các dòng có Mã Cuộn hợp lệ
+            df_scrap_all = df_scrap_all.dropna(subset=[COIL_ID_COL])
+            df_scrap_all[COIL_ID_COL] = df_scrap_all[COIL_ID_COL].astype(str).str.strip()
 
-            # Keep rows that have at least a valid Coil-ID and length > 0
-            df_scrap_raw = df_scrap_all.dropna(
-                subset=[col_length, col_scrap, COIL_ID_COL]
-            ).copy()
-            df_scrap_raw = df_scrap_raw[df_scrap_raw[col_length] > 0]
-
-            # ================================================================
-            # SECTION 0 — TOTAL LENGTH SUMMARY
-            # ================================================================
-            # Rule:
-            #   • For each coil (鋼捲號碼) we count its length ONCE (first pass).
-            #   • BUT if a coil appears in the data WITHOUT a valid 實測長度
-            #     (NaN / 0 after conversion) we still count it — we just can't
-            #     add its length, so we mark it as "No Length Data".
-            #   • Grand total = sum of first-pass lengths for coils that have data
-            #     + count of coils that have NO length data (shown separately).
             # ----------------------------------------------------------------
-            st.markdown("---")
-            st.subheader("📐 Section 0: Total Coil Length Summary")
-            st.caption(
-                "Tổng chiều dài cuộn thép theo từng period, loại trừ các lần chạy lại "
-                "(chỉ tính chiều dài lần đầu tiên của mỗi mã cuộn). "
-                "Cuộn không có dữ liệu chiều dài vẫn được đếm số lượng nhưng không cộng vào tổng chiều dài."
-            )
-
-            # ── All rows (with or without scrap data) that have a valid length ──
-            df_len_valid = df_scrap_all.copy()
-            df_len_valid[col_length] = pd.to_numeric(df_len_valid[col_length], errors='coerce')
-            df_len_valid = df_len_valid[df_len_valid[COIL_ID_COL].notna()]
-            df_len_valid[COIL_ID_COL] = df_len_valid[COIL_ID_COL].astype(str).str.strip()
-
-            # Separate: coils WITH and WITHOUT valid length
-            has_length  = df_len_valid[df_len_valid[col_length].notna() & (df_len_valid[col_length] > 0)]
-            no_length   = df_len_valid[df_len_valid[col_length].isna()  | (df_len_valid[col_length] <= 0)]
-
-            # First-pass length per coil (for coils that have data) — sort by date
-            coil_len_sorted = has_length.sort_values(
+            # 2. LOGIC TÍNH TỔNG CHIỀU DÀI (Bao gồm cả cuộn không có Scrap)
+            # ----------------------------------------------------------------
+            # Lọc ra các dòng có chiều dài > 0
+            df_has_length = df_scrap_all[df_scrap_all[col_length] > 0].sort_values(
                 by=[COIL_ID_COL, '烤三生產日期'], na_position='last'
             )
-            coil_orig_len = (
-                coil_len_sorted
-                .groupby(COIL_ID_COL, sort=False)
-                .first()
-                .reset_index()
-                [[COIL_ID_COL, col_length, 'Time_Group', 'Actual_Thickness', 'HR_Material']]
-                .rename(columns={col_length: 'Original_Length'})
-            )
+            
+            # Lấy thông tin chiều dài gốc (Pass 1) của MỖI cuộn
+            coil_first = df_has_length.groupby(COIL_ID_COL, sort=False).first().reset_index()
+            coil_len_df = coil_first[[
+                COIL_ID_COL, 'Time_Group', 'Actual_Thickness', 'HR_Material', col_length, '烤三生產日期'
+            ]].rename(columns={col_length: 'Original_Length'})
 
-            # Coils with no length — deduplicate by Coil-ID, keep Time_Group
-            coil_no_len = (
-                no_length
-                .drop_duplicates(subset=[COIL_ID_COL])
-                [[COIL_ID_COL, 'Time_Group', 'Actual_Thickness', 'HR_Material']]
-                .copy()
-            )
-            coil_no_len['Original_Length'] = np.nan
+            # ----------------------------------------------------------------
+            # 3. LOGIC TÍNH TỔNG PHẾ PHẨM (Cộng dồn qua tất cả các pass)
+            # ----------------------------------------------------------------
+            # Tính tổng scrap cho mỗi cuộn (những cuộn NaN scrap sẽ tính bằng 0)
+            coil_scrap_sum = df_scrap_all.groupby(COIL_ID_COL)[col_scrap].sum().reset_index().rename(columns={col_scrap: 'Total_Scrap'})
+            
+            # Đếm số lần chạy lại (Pass count)
+            coil_pass_count = df_scrap_all.groupby(COIL_ID_COL)[col_length].count().reset_index().rename(columns={col_length: 'Pass_Count'})
 
-            # ── Aggregate by Time_Group ──
-            len_by_period_valid = (
-                coil_orig_len.groupby('Time_Group').agg(
-                    Coils_With_Length=(COIL_ID_COL, 'count'),
-                    Total_Length_m=('Original_Length', 'sum'),
-                ).reset_index()
-            )
-            len_by_period_nolen = (
-                coil_no_len.groupby('Time_Group').agg(
-                    Coils_No_Length=(COIL_ID_COL, 'count'),
-                ).reset_index()
-            )
-            len_summary = len_by_period_valid.merge(
-                len_by_period_nolen, on='Time_Group', how='outer'
-            ).fillna(0)
-            len_summary['Total_Coils'] = (
-                len_summary['Coils_With_Length'] + len_summary['Coils_No_Length']
-            )
-            len_summary['Sort_Key'] = len_summary['Time_Group'].map(time_order_map).fillna(99)
-            len_summary = len_summary.sort_values('Sort_Key').drop(columns=['Sort_Key'])
-            len_summary.rename(columns={'Time_Group': 'Time Period'}, inplace=True)
-            len_summary = len_summary[[
-                'Time Period', 'Total_Coils',
-                'Coils_With_Length', 'Total_Length_m', 'Coils_No_Length'
-            ]]
+            # ----------------------------------------------------------------
+            # 4. GỘP DỮ LIỆU THÀNH MASTER COIL DATAFRAME
+            # ----------------------------------------------------------------
+            # Dùng LEFT MERGE để đảm bảo các cuộn có chiều dài nhưng không có scrap vẫn được giữ lại
+            df_coil = coil_len_df.merge(coil_scrap_sum, on=COIL_ID_COL, how='left') \
+                                 .merge(coil_pass_count, on=COIL_ID_COL, how='left')
+            
+            # Gán giá trị 0 cho những cuộn không có phế phẩm
+            df_coil['Total_Scrap'] = df_coil['Total_Scrap'].fillna(0)
+            
+            # Tính Scrap Rate (%)
+            df_coil['Scrap_Rate (%)'] = (df_coil['Total_Scrap'] / df_coil['Original_Length'] * 100).round(2)
 
-            # ── Display ──
-            def highlight_no_len(val):
-                if pd.isna(val) or val == 0: return ''
-                return 'color: #e06000; font-weight: bold'
-
-            st.dataframe(
-                len_summary.style
-                    .map(highlight_no_len, subset=['Coils_No_Length'])
-                    .background_gradient(subset=['Total_Length_m'], cmap='Blues')
-                    .format({
-                        'Total_Coils':        '{:.0f}',
-                        'Coils_With_Length':  '{:.0f}',
-                        'Total_Length_m':     '{:,.1f} m',
-                        'Coils_No_Length':    '{:.0f}',
-                    }),
-                use_container_width=True, hide_index=True
-            )
-
-            # ── Bar chart: Total length by period ──
-            fig0, ax0 = plt.subplots(figsize=(10, 4))
-            clrs0 = plt.cm.Blues(np.linspace(0.4, 0.85, len(len_summary)))
-            bars0 = ax0.bar(
-                len_summary['Time Period'],
-                len_summary['Total_Length_m'],
-                color=clrs0, edgecolor='white'
-            )
-            for bar, val in zip(bars0, len_summary['Total_Length_m']):
-                ax0.text(
-                    bar.get_x() + bar.get_width() / 2,
-                    bar.get_height() + len_summary['Total_Length_m'].max() * 0.01,
-                    f"{val:,.0f} m",
-                    ha='center', va='bottom', fontsize=9, fontweight='bold', color='#333'
-                )
-            ax0.set_title("Total Original Coil Length (m) by Period", fontweight='bold', fontsize=13)
-            ax0.set_xlabel("")
-            ax0.set_ylabel("Total Length (m)")
-            ax0.tick_params(axis='x', rotation=20)
-            ax0.set_ylim(0, len_summary['Total_Length_m'].max() * 1.18 + 1)
-            ax0.yaxis.set_major_formatter(
-                plt.FuncFormatter(lambda v, _: f"{v:,.0f}")
-            )
-            fig0.tight_layout()
-            plt.savefig("export_tab5_total_length.png", bbox_inches='tight', dpi=150)
-            st.pyplot(fig0)
-            plt.close(fig0)
-
-            # ── Breakdown by Thickness ──
-            with st.expander("📋 Length Breakdown by Thickness & Material"):
-                len_detail = (
-                    coil_orig_len.groupby(['Time_Group', 'Actual_Thickness', 'HR_Material']).agg(
-                        Coil_Count=(COIL_ID_COL, 'count'),
-                        Total_Length_m=('Original_Length', 'sum'),
-                    ).reset_index()
-                )
-                len_detail['Sort_Key'] = len_detail['Time_Group'].map(time_order_map).fillna(99)
-                len_detail = len_detail.sort_values(
-                    ['Sort_Key', 'Actual_Thickness', 'HR_Material']
-                ).drop(columns=['Sort_Key'])
-                st.dataframe(
-                    len_detail.style
-                        .background_gradient(subset=['Total_Length_m'], cmap='Blues')
-                        .format({
-                            'Actual_Thickness': '{:.2f}mm',
-                            'Coil_Count':       '{:.0f}',
-                            'Total_Length_m':   '{:,.1f} m',
-                        }),
-                    use_container_width=True, hide_index=True
-                )
-
-            # ── Coils with no length data detail ──
-            if not coil_no_len.empty:
-                with st.expander(
-                    f"⚠️ {len(coil_no_len)} Coils with No Length Data (click to view)"
-                ):
-                    st.dataframe(
-                        coil_no_len.rename(columns={'Time_Group': 'Period'})
-                            .sort_values('Period'),
-                        use_container_width=True, hide_index=True
-                    )
-
-            # ================================================================
-            # COIL-ID DEDUPLICATION for scrap rate calculation
-            # (only rows that have BOTH valid length AND valid scrap)
-            # ================================================================
-            df_scrap_sorted = df_scrap_raw.sort_values(
-                by=[COIL_ID_COL, '烤三生產日期'], na_position='last'
-            )
-            coil_first = (
-                df_scrap_sorted.groupby(COIL_ID_COL, sort=False).first().reset_index()
-                [[COIL_ID_COL, col_length, 'Time_Group', 'Actual_Thickness', 'HR_Material', '烤三生產日期']]
-                .rename(columns={col_length: 'Original_Length'})
-            )
-            coil_scrap_sum = (
-                df_scrap_sorted.groupby(COIL_ID_COL)[col_scrap].sum().reset_index()
-                .rename(columns={col_scrap: 'Total_Scrap'})
-            )
-            coil_pass_count = (
-                df_scrap_sorted.groupby(COIL_ID_COL)[col_length].count().reset_index()
-                .rename(columns={col_length: 'Pass_Count'})
-            )
-            df_coil = (
-                coil_first
-                .merge(coil_scrap_sum, on=COIL_ID_COL)
-                .merge(coil_pass_count, on=COIL_ID_COL)
-            )
-            df_coil['Scrap_Rate (%)'] = (
-                df_coil['Total_Scrap'] / df_coil['Original_Length'] * 100
-            ).round(2)
-
+            # --- Hiển thị thông báo về cuộn chạy lại ---
             multi_pass = df_coil[df_coil['Pass_Count'] > 1]
             if not multi_pass.empty:
                 st.info(
@@ -1345,7 +1195,7 @@ if uploaded_file is not None:
             st.pyplot(fig2)
             plt.close(fig2)
 
-            # Chart: by Material — high-contrast distinct colors
+            # Chart: by Material
             st.markdown("#### 🧱 Scrap Rate by Material across Periods")
             pivot_scrap_mat = scrap_detail.groupby(
                 ['Time_Group', 'HR_Material']
@@ -1392,8 +1242,9 @@ if uploaded_file is not None:
                 "(mẫu số bị phồng do cộng dồn chiều dài các lần chạy lại)."
             )
 
+            # Raw (old method): Sum all length rows vs Sum all scrap rows (ignoring Coil-ID deduplication)
             raw_by_period = (
-                df_scrap_raw.groupby('Time_Group')
+                df_scrap_all.groupby('Time_Group')
                 .apply(lambda x: x[col_scrap].sum() / x[col_length].sum() * 100
                        if x[col_length].sum() > 0 else 0)
                 .reset_index()
@@ -1403,7 +1254,7 @@ if uploaded_file is not None:
             corrected_by_period = scrap_by_period[['Time Period', 'Scrap_Rate (%)']].rename(
                 columns={'Time Period': 'Time_Group', 'Scrap_Rate (%)': 'Scrap_Rate_Corrected (%)'}
             )
-            compare_df = raw_by_period.merge(corrected_by_period, on='Time_Group', how='outer')
+            compare_df = raw_by_period.merge(corrected_by_period, on='Time_Group', how='inner')
             compare_df['Difference (pp)'] = (
                 compare_df['Scrap_Rate_Corrected (%)'] - compare_df['Scrap_Rate_Raw (%)']
             ).round(3)
@@ -1420,7 +1271,7 @@ if uploaded_file is not None:
                 compare_df.style
                     .map(highlight_diff, subset=['Difference (pp)'])
                     .format({
-                        'Scrap_Rate_Raw (%)':       '{:.3f}%',
+                        'Scrap_Rate_Raw (%)':        '{:.3f}%',
                         'Scrap_Rate_Corrected (%)': '{:.3f}%',
                         'Difference (pp)':          '{:+.3f}'
                     }),
@@ -1451,8 +1302,6 @@ if uploaded_file is not None:
             output_scrap = io.BytesIO()
             try:
                 with pd.ExcelWriter(output_scrap, engine='xlsxwriter') as writer:
-                    len_summary.to_excel(writer, index=False, sheet_name='Total_Length_Summary')
-                    len_detail.to_excel(writer, index=False, sheet_name='Length_by_Thick_Material')
                     scrap_by_period.to_excel(writer, index=False, sheet_name='Scrap_By_Period')
                     scrap_detail.to_excel(
                         writer, index=False, sheet_name='Scrap_By_Period_Thick_Mat'
@@ -1460,8 +1309,6 @@ if uploaded_file is not None:
                     compare_df.to_excel(writer, index=False, sheet_name='Raw_vs_Corrected')
                     if not multi_pass.empty:
                         multi_pass.to_excel(writer, index=False, sheet_name='Multi_Pass_Coils')
-                    if not coil_no_len.empty:
-                        coil_no_len.to_excel(writer, index=False, sheet_name='No_Length_Coils')
                 st.download_button(
                     label="📥 Download Scrap & Length Analysis Excel",
                     data=output_scrap.getvalue(),
@@ -1470,7 +1317,6 @@ if uploaded_file is not None:
                 )
             except Exception as e:
                 st.warning(f"Could not generate Excel: {e}")
-
     # ==========================================================
     # EXPORT PDF
     # ==========================================================
