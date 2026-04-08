@@ -996,13 +996,14 @@ if uploaded_file is not None:
 
     # ==========================================================
    # ==========================================================
+# ==========================================================
     # --- TAB 5: TAIL SCRAP ANALYSIS (COIL-ID AWARE) ---
     # ==========================================================
     with tab5:
         st.header("5. Tail Scrap & Length Rejection Analysis")
         st.info(
-            "Analysis of tail scrap rejection rate based on 實測長度 (Measured Length) "
-            "and 尾料剔退 (Tail Scrap Rejected).\n\n"
+            "Analysis of tail scrap rejection rate based on Measured Length "
+            "and Tail Scrap Rejected.\n\n"
             "⚙️ **Coil-ID Aware Logic:** A coil running through the line multiple times "
             "is handled correctly. **Total Length** is based on the FIRST pass of ALL coils "
             "(including those with zero scrap). **Total Scrap** is the sum across all passes."
@@ -1022,47 +1023,37 @@ if uploaded_file is not None:
             df_scrap_all[col_length] = pd.to_numeric(df_scrap_all[col_length], errors='coerce')
             df_scrap_all[col_scrap]  = pd.to_numeric(df_scrap_all[col_scrap],  errors='coerce')
             
-            # Giữ lại các dòng có Mã Cuộn hợp lệ
             df_scrap_all = df_scrap_all.dropna(subset=[COIL_ID_COL])
             df_scrap_all[COIL_ID_COL] = df_scrap_all[COIL_ID_COL].astype(str).str.strip()
 
             # ----------------------------------------------------------------
-            # 2. LOGIC TÍNH TỔNG CHIỀU DÀI (Bao gồm cả cuộn không có Scrap)
+            # 2. TOTAL LENGTH LOGIC (Including coils with no Scrap)
             # ----------------------------------------------------------------
-            # Lọc ra các dòng có chiều dài > 0
             df_has_length = df_scrap_all[df_scrap_all[col_length] > 0].sort_values(
-                by=[COIL_ID_COL, '烤三生產日期'], na_position='last'
+                by=['Time_Group', COIL_ID_COL, '烤三生產日期'], na_position='last'
             )
             
-            # Lấy thông tin chiều dài gốc (Pass 1) của MỖI cuộn
-            coil_first = df_has_length.groupby(COIL_ID_COL, sort=False).first().reset_index()
+            # CRITICAL FIX: Group by Time_Group AND Coil_ID to prevent cross-period duplication
+            coil_first = df_has_length.groupby(['Time_Group', COIL_ID_COL], sort=False).first().reset_index()
             coil_len_df = coil_first[[
                 COIL_ID_COL, 'Time_Group', 'Actual_Thickness', 'HR_Material', col_length, '烤三生產日期'
             ]].rename(columns={col_length: 'Original_Length'})
 
             # ----------------------------------------------------------------
-            # 3. LOGIC TÍNH TỔNG PHẾ PHẨM (Cộng dồn qua tất cả các pass)
+            # 3. TOTAL SCRAP LOGIC (Accumulated across all passes per period)
             # ----------------------------------------------------------------
-            # Tính tổng scrap cho mỗi cuộn (những cuộn NaN scrap sẽ tính bằng 0)
-            coil_scrap_sum = df_scrap_all.groupby(COIL_ID_COL)[col_scrap].sum().reset_index().rename(columns={col_scrap: 'Total_Scrap'})
-            
-            # Đếm số lần chạy lại (Pass count)
-            coil_pass_count = df_scrap_all.groupby(COIL_ID_COL)[col_length].count().reset_index().rename(columns={col_length: 'Pass_Count'})
+            coil_scrap_sum = df_scrap_all.groupby(['Time_Group', COIL_ID_COL])[col_scrap].sum().reset_index().rename(columns={col_scrap: 'Total_Scrap'})
+            coil_pass_count = df_scrap_all.groupby(['Time_Group', COIL_ID_COL])[col_length].count().reset_index().rename(columns={col_length: 'Pass_Count'})
 
             # ----------------------------------------------------------------
-            # 4. GỘP DỮ LIỆU THÀNH MASTER COIL DATAFRAME
+            # 4. MASTER COIL DATAFRAME MERGE
             # ----------------------------------------------------------------
-            # Dùng LEFT MERGE để đảm bảo các cuộn có chiều dài nhưng không có scrap vẫn được giữ lại
-            df_coil = coil_len_df.merge(coil_scrap_sum, on=COIL_ID_COL, how='left') \
-                                 .merge(coil_pass_count, on=COIL_ID_COL, how='left')
+            df_coil = coil_len_df.merge(coil_scrap_sum, on=['Time_Group', COIL_ID_COL], how='left') \
+                                 .merge(coil_pass_count, on=['Time_Group', COIL_ID_COL], how='left')
             
-            # Gán giá trị 0 cho những cuộn không có phế phẩm
             df_coil['Total_Scrap'] = df_coil['Total_Scrap'].fillna(0)
-            
-            # Tính Scrap Rate (%)
             df_coil['Scrap_Rate (%)'] = (df_coil['Total_Scrap'] / df_coil['Original_Length'] * 100).round(2)
 
-            # --- Hiển thị thông báo về cuộn chạy lại ---
             multi_pass = df_coil[df_coil['Pass_Count'] > 1]
             if not multi_pass.empty:
                 st.info(
@@ -1239,10 +1230,9 @@ if uploaded_file is not None:
             st.subheader("🔍 Section 3: Impact of Coil-ID Fix (Raw vs Corrected)")
             st.caption(
                 "A higher corrected rate = the raw method was undercounting "
-                "(mẫu số bị phồng do cộng dồn chiều dài các lần chạy lại)."
+                "(Denominator artificially inflated due to length duplication across passes)."
             )
 
-            # Raw (old method): Sum all length rows vs Sum all scrap rows (ignoring Coil-ID deduplication)
             raw_by_period = (
                 df_scrap_all.groupby('Time_Group')
                 .apply(lambda x: x[col_scrap].sum() / x[col_length].sum() * 100
