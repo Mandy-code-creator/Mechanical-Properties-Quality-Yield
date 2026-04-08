@@ -1023,38 +1023,43 @@ if uploaded_file is not None:
             df_scrap_all[col_length] = pd.to_numeric(df_scrap_all[col_length], errors='coerce')
             df_scrap_all[col_scrap]  = pd.to_numeric(df_scrap_all[col_scrap],  errors='coerce')
             
-            # CRITICAL FIX: Handle empty Coil IDs dynamically so they are NOT grouped together
+            # CRITICAL FIX for TypeError: Handle empty Coil IDs safely using array assignment
             df_scrap_all[COIL_ID_COL] = df_scrap_all[COIL_ID_COL].astype(str).str.strip().replace(['nan', 'None', '', 'NaN'], np.nan)
-            df_scrap_all[COIL_ID_COL] = df_scrap_all[COIL_ID_COL].fillna("UNKNOWN_ID_" + df_scrap_all.index.astype(str))
+            missing_mask = df_scrap_all[COIL_ID_COL].isna()
+            if missing_mask.any():
+                df_scrap_all.loc[missing_mask, COIL_ID_COL] = [f"UNKNOWN_ID_{i}" for i in df_scrap_all[missing_mask].index]
 
             # ----------------------------------------------------------------
-            # 2. MASTER COIL BASE
+            # 2. CALCULATE TRUE ORIGINAL LENGTH (1st Pass Only)
             # ----------------------------------------------------------------
-            # Get all unique coils per period
-            all_coils = df_scrap_all[['Time_Group', COIL_ID_COL, 'Actual_Thickness', 'HR_Material']].drop_duplicates(subset=['Time_Group', COIL_ID_COL])
+            # Filter rows with valid length, sort to keep the earliest production date first
+            df_has_length = df_scrap_all[df_scrap_all[col_length] > 0].sort_values(
+                by=['Time_Group', COIL_ID_COL, '烤三生產日期'], na_position='last'
+            )
             
+            # Take the first occurrence of each Coil ID per Time Group
+            coil_first_len = df_has_length.groupby(['Time_Group', COIL_ID_COL], sort=False)[col_length].first().reset_index()
+            coil_first_len = coil_first_len.rename(columns={col_length: 'Original_Length'})
+            
+            # Get metadata for the grouped coils
+            coil_meta = df_has_length.groupby(['Time_Group', COIL_ID_COL], sort=False)[['Actual_Thickness', 'HR_Material']].first().reset_index()
+            coil_first_len = coil_first_len.merge(coil_meta, on=['Time_Group', COIL_ID_COL], how='left')
+
             # ----------------------------------------------------------------
-            # 3. CALCULATE TRUE ORIGINAL LENGTH (1st Pass Only)
-            # ----------------------------------------------------------------
-            coil_first_len = df_scrap_all[df_scrap_all[col_length] > 0].sort_values(by=['Time_Group', COIL_ID_COL, '烤三生產日期'], na_position='last') \
-                .groupby(['Time_Group', COIL_ID_COL])[col_length].first().reset_index().rename(columns={col_length: 'Original_Length'})
-                
-            # ----------------------------------------------------------------
-            # 4. CALCULATE ACCUMULATED SCRAP (All Passes)
+            # 3. CALCULATE ACCUMULATED SCRAP (All Passes)
             # ----------------------------------------------------------------
             coil_scrap_sum = df_scrap_all.groupby(['Time_Group', COIL_ID_COL])[col_scrap].sum().reset_index().rename(columns={col_scrap: 'Total_Scrap'})
             
             # ----------------------------------------------------------------
-            # 5. PASS COUNT
+            # 4. PASS COUNT
             # ----------------------------------------------------------------
             coil_pass_count = df_scrap_all.groupby(['Time_Group', COIL_ID_COL])[COIL_ID_COL].count().reset_index(name='Pass_Count')
 
             # ----------------------------------------------------------------
-            # 6. MERGE ALL METRICS INTO A SINGLE MASTER DATAFRAME
+            # 5. MERGE ALL METRICS INTO A SINGLE MASTER DATAFRAME
             # ----------------------------------------------------------------
-            df_coil = all_coils.merge(coil_first_len, on=['Time_Group', COIL_ID_COL], how='left') \
-                               .merge(coil_scrap_sum, on=['Time_Group', COIL_ID_COL], how='left') \
-                               .merge(coil_pass_count, on=['Time_Group', COIL_ID_COL], how='left')
+            df_coil = coil_first_len.merge(coil_scrap_sum, on=['Time_Group', COIL_ID_COL], how='left') \
+                                    .merge(coil_pass_count, on=['Time_Group', COIL_ID_COL], how='left')
             
             df_coil['Original_Length'] = df_coil['Original_Length'].fillna(0)
             df_coil['Total_Scrap'] = df_coil['Total_Scrap'].fillna(0)
@@ -1099,8 +1104,10 @@ if uploaded_file is not None:
                     Coil_Count=(COIL_ID_COL, 'count'),
                 ).reset_index()
             )
-            scrap_by_period['Scrap_Rate (%)'] = (
-                scrap_by_period['Total_Scrap'] / scrap_by_period['Total_Length'] * 100
+            scrap_by_period['Scrap_Rate (%)'] = np.where(
+                scrap_by_period['Total_Length'] > 0,
+                (scrap_by_period['Total_Scrap'] / scrap_by_period['Total_Length'] * 100),
+                0
             ).round(2)
             scrap_by_period['Sort_Key'] = scrap_by_period['Time_Group'].map(time_order_map).fillna(99)
             scrap_by_period = scrap_by_period.sort_values('Sort_Key').drop(columns=['Sort_Key'])
@@ -1150,8 +1157,10 @@ if uploaded_file is not None:
                     Coil_Count=(COIL_ID_COL, 'count'),
                 ).reset_index()
             )
-            scrap_detail['Scrap_Rate (%)'] = (
-                scrap_detail['Total_Scrap'] / scrap_detail['Total_Length'] * 100
+            scrap_detail['Scrap_Rate (%)'] = np.where(
+                scrap_detail['Total_Length'] > 0,
+                (scrap_detail['Total_Scrap'] / scrap_detail['Total_Length'] * 100),
+                0
             ).round(2)
             scrap_detail['Sort_Key'] = scrap_detail['Time_Group'].map(time_order_map).fillna(99)
             scrap_detail = scrap_detail.sort_values(
