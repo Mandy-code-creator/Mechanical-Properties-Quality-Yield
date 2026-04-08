@@ -1017,42 +1017,54 @@ if uploaded_file is not None:
             st.error(f"Missing columns: {missing}. Please check your data file.")
         else:
             # ----------------------------------------------------------------
-            # 1. PRE-PROCESS: Convert to numeric and filter valid Coil IDs
+            # 1. PRE-PROCESS: Convert to numeric and secure Coil IDs
             # ----------------------------------------------------------------
             df_scrap_all = df_filtered.copy()
             df_scrap_all[col_length] = pd.to_numeric(df_scrap_all[col_length], errors='coerce')
             df_scrap_all[col_scrap]  = pd.to_numeric(df_scrap_all[col_scrap],  errors='coerce')
             
-            df_scrap_all = df_scrap_all.dropna(subset=[COIL_ID_COL])
-            df_scrap_all[COIL_ID_COL] = df_scrap_all[COIL_ID_COL].astype(str).str.strip()
+            # CRITICAL FIX: Handle empty Coil IDs dynamically so they are NOT grouped together
+            df_scrap_all[COIL_ID_COL] = df_scrap_all[COIL_ID_COL].astype(str).str.strip().replace(['nan', 'None', '', 'NaN'], np.nan)
+            df_scrap_all[COIL_ID_COL] = df_scrap_all[COIL_ID_COL].fillna("UNKNOWN_ID_" + df_scrap_all.index.astype(str))
 
             # ----------------------------------------------------------------
-            # 2. TOTAL LENGTH LOGIC (Including coils with no Scrap)
+            # 2. MASTER COIL BASE
             # ----------------------------------------------------------------
-            df_has_length = df_scrap_all[df_scrap_all[col_length] > 0].sort_values(
-                by=['Time_Group', COIL_ID_COL, '烤三生產日期'], na_position='last'
-            )
+            # Get all unique coils per period
+            all_coils = df_scrap_all[['Time_Group', COIL_ID_COL, 'Actual_Thickness', 'HR_Material']].drop_duplicates(subset=['Time_Group', COIL_ID_COL])
             
-            # CRITICAL FIX: Group by Time_Group AND Coil_ID to prevent cross-period duplication
-            coil_first = df_has_length.groupby(['Time_Group', COIL_ID_COL], sort=False).first().reset_index()
-            coil_len_df = coil_first[[
-                COIL_ID_COL, 'Time_Group', 'Actual_Thickness', 'HR_Material', col_length, '烤三生產日期'
-            ]].rename(columns={col_length: 'Original_Length'})
-
             # ----------------------------------------------------------------
-            # 3. TOTAL SCRAP LOGIC (Accumulated across all passes per period)
+            # 3. CALCULATE TRUE ORIGINAL LENGTH (1st Pass Only)
+            # ----------------------------------------------------------------
+            coil_first_len = df_scrap_all[df_scrap_all[col_length] > 0].sort_values(by=['Time_Group', COIL_ID_COL, '烤三生產日期'], na_position='last') \
+                .groupby(['Time_Group', COIL_ID_COL])[col_length].first().reset_index().rename(columns={col_length: 'Original_Length'})
+                
+            # ----------------------------------------------------------------
+            # 4. CALCULATE ACCUMULATED SCRAP (All Passes)
             # ----------------------------------------------------------------
             coil_scrap_sum = df_scrap_all.groupby(['Time_Group', COIL_ID_COL])[col_scrap].sum().reset_index().rename(columns={col_scrap: 'Total_Scrap'})
-            coil_pass_count = df_scrap_all.groupby(['Time_Group', COIL_ID_COL])[col_length].count().reset_index().rename(columns={col_length: 'Pass_Count'})
+            
+            # ----------------------------------------------------------------
+            # 5. PASS COUNT
+            # ----------------------------------------------------------------
+            coil_pass_count = df_scrap_all.groupby(['Time_Group', COIL_ID_COL])[COIL_ID_COL].count().reset_index(name='Pass_Count')
 
             # ----------------------------------------------------------------
-            # 4. MASTER COIL DATAFRAME MERGE
+            # 6. MERGE ALL METRICS INTO A SINGLE MASTER DATAFRAME
             # ----------------------------------------------------------------
-            df_coil = coil_len_df.merge(coil_scrap_sum, on=['Time_Group', COIL_ID_COL], how='left') \
-                                 .merge(coil_pass_count, on=['Time_Group', COIL_ID_COL], how='left')
+            df_coil = all_coils.merge(coil_first_len, on=['Time_Group', COIL_ID_COL], how='left') \
+                               .merge(coil_scrap_sum, on=['Time_Group', COIL_ID_COL], how='left') \
+                               .merge(coil_pass_count, on=['Time_Group', COIL_ID_COL], how='left')
             
+            df_coil['Original_Length'] = df_coil['Original_Length'].fillna(0)
             df_coil['Total_Scrap'] = df_coil['Total_Scrap'].fillna(0)
-            df_coil['Scrap_Rate (%)'] = (df_coil['Total_Scrap'] / df_coil['Original_Length'] * 100).round(2)
+            
+            # Safely calculate Scrap Rate (Prevent Division by Zero)
+            df_coil['Scrap_Rate (%)'] = np.where(
+                df_coil['Original_Length'] > 0,
+                (df_coil['Total_Scrap'] / df_coil['Original_Length'] * 100),
+                0
+            ).round(2)
 
             multi_pass = df_coil[df_coil['Pass_Count'] > 1]
             if not multi_pass.empty:
