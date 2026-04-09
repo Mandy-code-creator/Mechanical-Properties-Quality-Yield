@@ -901,13 +901,12 @@ if uploaded_file is not None:
                 )
 
             # ==========================================================
-            # UPDATED: Visual Hotspot Map (Column order & Font sizes)
+            # UPDATED: Visual Hotspot Map (Enlarged Q3/Q4 Labels)
             # ==========================================================
             st.markdown("---")
             st.subheader("🗺️ Evidence: Visual Hotspot Map (Grades B+ and Below)")
             heat_pivot = heat_data.unstack()
             
-            # --- Move 2025 Full Year next to 2024 Full Year by setting its weight to 1.5 ---
             local_order_map = {
                 "2024 (Full Year)": 1,
                 "2025 (Full Year)": 1.5,
@@ -925,12 +924,10 @@ if uploaded_file is not None:
                 fig, ax = plt.subplots(figsize=(12, 5))
                 vmax_threshold = 30.0 if heat_pivot.max().max() > 30 else heat_pivot.max().max()
                 
-                # Grid lines set to black
                 sns.heatmap(heat_pivot, annot=True, fmt=".1f", cmap="YlOrRd",
                             linewidths=0.8, linecolor='black', vmax=vmax_threshold, ax=ax,
-                            annot_kws={"size": 10}) # Default font size
+                            annot_kws={"size": 10})
 
-                # Enlarge font size for ALL hotspots (value >= 3.0) across any period
                 for text in ax.texts:
                     val_str = text.get_text()
                     if val_str:
@@ -941,6 +938,15 @@ if uploaded_file is not None:
                                 text.set_fontweight('heavy')
                         except ValueError:
                             pass
+
+                # NEW: Enlarge x-axis labels specifically for Q3 and Q4
+                for label in ax.get_xticklabels():
+                    text_str = label.get_text()
+                    if 'Q3' in text_str or 'Q4' in text_str:
+                        label.set_fontsize(13)
+                        label.set_fontweight('bold')
+                    else:
+                        label.set_fontsize(10) # Default size for others
 
                 ax.set_title("SEVERE DEFECT RATE (%)", fontweight='bold', color='#d62728')
                 ax.set_ylabel("")
