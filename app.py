@@ -332,22 +332,58 @@ if uploaded_file is not None:
             )
 
     # ==========================================================
-    # TAB 2: DISTRIBUTION + Cp / Cpk / Ca
+    # ==========================================================
+    # --- TAB 2: DISTRIBUTION + Cp / Cpk / Ca ---
     # ==========================================================
     with tab2:
+        st.header("📊 Distribution & Process Capability (SPC)")
+        
+        # --- NEW: Q4 Drilldown Logic for Consistent Timeline ---
+        st.info(
+            "💡 **Timeline Consistency:** '2025 Q4' is automatically split into **October** "
+            "and **Nov-Dec** to accurately track process capability improvements."
+        )
+        
+        df_tab2 = df_filtered.copy()
+        
+        def refine_q4_tab2(row):
+            if row['Time_Group'] == '2025 Q4' and pd.notna(row.get('烤三生產日期')):
+                if row['烤三生產日期'].month == 10:
+                    return '2025 Q4 (Oct)'
+                else:
+                    return '2025 Q4 (Nov-Dec)'
+            return row['Time_Group']
+            
+        if '烤三生產日期' in df_tab2.columns:
+            df_tab2['Time_Group'] = df_tab2.apply(refine_q4_tab2, axis=1)
+
+        local_order_map = {
+            "2024 (Full Year)": 1,
+            "2025 H1 (Until 06/28)": 2,
+            "2025 Q3 (06/29 - 09/30)": 3,
+            "2025 Q4 (Oct)": 4.1,
+            "2025 Q4 (Nov-Dec)": 4.2,
+            "2025 (Full Year)": 5,
+            "2026 Q1": 6
+        }
+        
+        # Expand selected periods if Q4 is chosen
+        tab2_periods = []
+        for p in selected_periods:
+            if p == '2025 Q4':
+                tab2_periods.extend(['2025 Q4 (Oct)', '2025 Q4 (Nov-Dec)'])
+            else:
+                if p not in tab2_periods:
+                    tab2_periods.append(p)
+                    
+        tab2_periods = sorted(tab2_periods, key=lambda x: local_order_map.get(x, 99))
+
         # ----------------------------------------------------------
         # CAPABILITY INDEX HELPERS
         # ----------------------------------------------------------
         def calc_capability(values, feat):
             """
             Return dict with mean, std, Cp, Cpk, Ca (None if spec missing).
-            Formula:
-              Ca  = (mean - target) / ((USL - LSL) / 2)   × 100%   [centering accuracy]
-              Cp  = (USL - LSL) / (6 × std)               [spread vs tolerance]
-              Cpk = min(CPU, CPL)
-                    CPU = (USL - mean) / (3 × std)
-                    CPL = (mean - LSL) / (3 × std)
-            For one-sided specs (EL, YPE) only CPL is computed; Cp = CPL.
             """
             vals = np.array(values, dtype=float)
             vals = vals[~np.isnan(vals)]
@@ -368,7 +404,6 @@ if uploaded_file is not None:
                       'LSL': lsl, 'USL': usl, 'Target': tgt}
 
             if lsl is not None and usl is not None:
-                # Two-sided
                 cp   = (usl - lsl) / (6 * std)
                 cpu  = (usl - mu)  / (3 * std)
                 cpl  = (mu  - lsl) / (3 * std)
@@ -383,12 +418,10 @@ if uploaded_file is not None:
                     ca  = (mu - mid) / ((usl - lsl) / 2) * 100
                     result['Ca'] = round(ca, 2)
             elif lsl is not None:
-                # One-sided lower (EL, YPE)
                 cpl = (mu - lsl) / (3 * std)
                 result['Cp']  = round(cpl, 3)
                 result['Cpk'] = round(cpl, 3)
             elif usl is not None:
-                # One-sided upper
                 cpu = (usl - mu) / (3 * std)
                 result['Cp']  = round(cpu, 3)
                 result['Cpk'] = round(cpu, 3)
@@ -398,10 +431,10 @@ if uploaded_file is not None:
         def cpk_color(cpk):
             """Traffic-light color for Cpk."""
             if cpk is None: return '#888888'
-            if cpk >= 1.67: return '#2e7d32'   # excellent — dark green
-            if cpk >= 1.33: return '#66bb6a'   # capable — light green
-            if cpk >= 1.00: return '#ffa726'   # marginal — orange
-            return '#d62728'                   # not capable — red
+            if cpk >= 1.67: return '#2e7d32'   # excellent
+            if cpk >= 1.33: return '#66bb6a'   # capable
+            if cpk >= 1.00: return '#ffa726'   # marginal
+            return '#d62728'                   # not capable
 
         def cpk_label(cpk):
             if cpk is None: return 'N/A'
@@ -447,15 +480,10 @@ if uploaded_file is not None:
             """
             st.markdown(html_badge, unsafe_allow_html=True)
 
-        # ----------------------------------------------------------
-        # Capability Summary Table — cross-period comparison
-        # ----------------------------------------------------------
         def build_capability_summary(df_src, feat, label):
-            """Return one-row dict for the summary table."""
             vals = df_src[feat].dropna().values if feat in df_src.columns else []
             cap = calc_capability(vals, feat)
-            if cap is None:
-                return None
+            if cap is None: return None
             return {
                 'Period / Segment': label,
                 'Feature': feat,
@@ -470,9 +498,6 @@ if uploaded_file is not None:
                 'Verdict': cpk_label(cap['Cpk']).replace('✅ ', '').replace('⚠️ ', '').replace('❌ ', '')
             }
 
-        # ----------------------------------------------------------
-        # X-axis bounds (global, consistent across all periods)
-        # ----------------------------------------------------------
         global_x_bounds = {}
         for feat in mech_features:
             if feat in df.columns:
@@ -493,7 +518,6 @@ if uploaded_file is not None:
             return max_y * 1.35 if max_y > 0 else 50
 
         def plot_dist(ax, data, feat, title, y_lim):
-            """Histogram stacked by grade + mean vlines + Cp/Cpk/Ca spec lines."""
             c_map = {
                 'A-B+': '#2ca02c', 'A-B': '#1f77b4',
                 'A-B-': '#ff7f0e', 'B+': '#9467bd', 'B': '#d62728'
@@ -532,8 +556,7 @@ if uploaded_file is not None:
                             positions[i - 1] = mid - min_gap / 2
                             positions[i] = mid + min_gap / 2
                             moved = True
-                    if not moved:
-                        break
+                    if not moved: break
                 y_levels = [y_lim * (0.92 - (i % 4) * 0.13) for i in range(len(m_info))]
                 for i, info in enumerate(m_info):
                     x_pos = positions[i]
@@ -548,43 +571,34 @@ if uploaded_file is not None:
                         if abs(x_pos - info['v']) > min_gap * 0.3 else None
                     )
 
-            # --- Draw spec lines (LSL / USL / Target) ---
             y_top = y_lim * 0.98
             if lsl is not None:
                 ax.axvline(lsl, color='red', lw=2, ls='-', zorder=3)
-                ax.text(lsl, y_top, f' LSL\n {lsl}', color='red',
-                        fontsize=7.5, fontweight='bold', va='top', ha='left')
+                ax.text(lsl, y_top, f' LSL\n {lsl}', color='red', fontsize=7.5, fontweight='bold', va='top', ha='left')
             if usl is not None:
                 ax.axvline(usl, color='red', lw=2, ls='-', zorder=3)
-                ax.text(usl, y_top, f' USL\n {usl}', color='red',
-                        fontsize=7.5, fontweight='bold', va='top', ha='right')
+                ax.text(usl, y_top, f' USL\n {usl}', color='red', fontsize=7.5, fontweight='bold', va='top', ha='right')
             if tgt is not None:
                 ax.axvline(tgt, color='#1a7abf', lw=1.5, ls=':', zorder=3)
-                ax.text(tgt, y_top * 0.75, f' TGT\n {tgt}', color='#1a7abf',
-                        fontsize=7, fontweight='bold', va='top', ha='left')
+                ax.text(tgt, y_top * 0.75, f' TGT\n {tgt}', color='#1a7abf', fontsize=7, fontweight='bold', va='top', ha='left')
 
-            ax.legend(
-                handles=[Patch(facecolor=c_map[g], label=g) for g in base_grades if g in data.columns],
-                loc='upper right', fontsize=7
-            )
+            ax.legend(handles=[Patch(facecolor=c_map[g], label=g) for g in base_grades if g in data.columns],
+                      loc='upper right', fontsize=7)
             ax.set_xlim(fmin, fmax)
             ax.set_ylim(0, y_lim)
             ax.set_title(title, fontsize=10, fontweight='bold')
 
         # ----------------------------------------------------------
-        # Build cross-period capability summary (all periods × all feats)
+        # Build cross-period capability summary
         # ----------------------------------------------------------
         cap_summary_rows = []
-        for _p in selected_periods:
-            _dfp = df_filtered[df_filtered['Time_Group'] == _p]
+        for _p in tab2_periods:
+            _dfp = df_tab2[df_tab2['Time_Group'] == _p]
             for _f in ['YS', 'TS', 'EL', 'YPE']:
                 row = build_capability_summary(_dfp, _f, _p)
                 if row:
                     cap_summary_rows.append(row)
 
-        # ----------------------------------------------------------
-        # Cross-period Capability Summary Table (pinned at top)
-        # ----------------------------------------------------------
         if cap_summary_rows:
             st.subheader("📊 Process Capability Summary (All Selected Periods)")
             st.caption(
@@ -595,6 +609,89 @@ if uploaded_file is not None:
             )
             cap_df = pd.DataFrame(cap_summary_rows)
 
+            # ==========================================================
+            # CROSS-PERIOD COMPARISON MATRIX
+            # ==========================================================
+            st.markdown("### 🔄 Cross-Period Comparison (Cpk, Cp, Ca Trend)")
+            
+            trend_data = []
+            for p in tab2_periods:
+                if p not in cap_df['Period / Segment'].values: continue
+                row = {'Period': p}
+                for feat in ['YS', 'TS', 'EL', 'YPE']:
+                    df_fp = cap_df[(cap_df['Period / Segment'] == p) & (cap_df['Feature'] == feat)]
+                    if not df_fp.empty:
+                        row[f"{feat} Cpk"] = df_fp.iloc[0]['Cpk']
+                        row[f"{feat} Cp"] = df_fp.iloc[0]['Cp']
+                        row[f"{feat} Ca (%)"] = df_fp.iloc[0]['Ca (%)']
+                if len(row) > 1:
+                    trend_data.append(row)
+                    
+            if trend_data:
+                trend_df = pd.DataFrame(trend_data).set_index('Period')
+                
+                def style_trend_table(df):
+                    styles = pd.DataFrame('', index=df.index, columns=df.columns)
+                    for r_idx in df.index:
+                        for c in df.columns:
+                            val = df.at[r_idx, c]
+                            if pd.isna(val): continue
+                            
+                            if "Cpk" in c:
+                                if val >= 1.67: styles.at[r_idx, c] = 'background-color: #2e7d32; color: white; font-weight: bold;'
+                                elif val >= 1.33: styles.at[r_idx, c] = 'background-color: #66bb6a; color: white; font-weight: bold;'
+                                elif val >= 1.00: styles.at[r_idx, c] = 'background-color: #ffa726; color: black; font-weight: bold;'
+                                else: styles.at[r_idx, c] = 'background-color: #d62728; color: white; font-weight: bold;'
+                            elif "Cp" in c:
+                                if val >= 1.67: styles.at[r_idx, c] = 'color: #2e7d32; font-weight: bold;'
+                                elif val >= 1.33: styles.at[r_idx, c] = 'color: #66bb6a; font-weight: bold;'
+                                elif val >= 1.00: styles.at[r_idx, c] = 'color: #ffa726; font-weight: bold;'
+                                else: styles.at[r_idx, c] = 'color: #d62728; font-weight: bold;'
+                            elif "Ca" in c:
+                                av = abs(val)
+                                if av <= 12.5: styles.at[r_idx, c] = 'color: #2e7d32; font-weight: bold;'
+                                elif av <= 25.0: styles.at[r_idx, c] = 'color: #ffa726; font-weight: bold;'
+                                else: styles.at[r_idx, c] = 'color: #d62728; font-weight: bold;'
+                    return styles
+                
+                format_dict = {c: "{:.1f}%" if "Ca" in c else "{:.3f}" for c in trend_df.columns}
+                styled_trend = trend_df.style.apply(style_trend_table, axis=None).format(format_dict, na_rep="—")
+                st.dataframe(styled_trend, use_container_width=True)
+
+                # ==========================================================
+                # AUTOMATED TREND CONCLUSION
+                # ==========================================================
+                st.markdown("#### 💡 Automated Trend Conclusion")
+                periods_list = trend_df.index.tolist()
+                
+                if len(periods_list) >= 2:
+                    first_p = periods_list[0]
+                    last_p = periods_list[-1]
+                    
+                    for feat in ['YS', 'TS', 'EL', 'YPE']:
+                        cpk_col = f"{feat} Cpk"
+                        if cpk_col in trend_df.columns:
+                            val_first = trend_df.at[first_p, cpk_col]
+                            val_last = trend_df.at[last_p, cpk_col]
+                            
+                            if pd.isna(val_first) or pd.isna(val_last): continue
+                            
+                            diff = val_last - val_first
+                            
+                            if diff >= 0.05: trend_status = "📈 **Improving**"
+                            elif diff <= -0.05: trend_status = "📉 **Declining**"
+                            else: trend_status = "➡️ **Stable**"
+                            
+                            if val_last >= 1.33: risk_status = "✅ **Safe** (Capable)"
+                            elif val_last >= 1.00: risk_status = "⚠️ **Warning** (Marginal)"
+                            else: risk_status = "❌ **Danger** (Not Capable)"
+                            
+                            st.info(f"**{feat}:** Compared to [{first_p}], the capability (Cpk) in [{last_p}] shifted from **{val_first:.2f}** to **{val_last:.2f}** ➔ Trend: {trend_status}. Current Status: {risk_status}.")
+                else:
+                    st.caption("ℹ️ Please select at least 2 periods in the sidebar filter to enable automated trend comparison.")
+
+            st.markdown("### 📋 Detailed Capability Log")
+            
             def color_cpk_cell(val):
                 if pd.isna(val): return ''
                 c = cpk_color(val)
@@ -624,15 +721,17 @@ if uploaded_file is not None:
             )
             st.dataframe(styled, use_container_width=True, hide_index=True)
 
-            # Download capability summary
             cap_xlsx = io.BytesIO()
             try:
                 with pd.ExcelWriter(cap_xlsx, engine='xlsxwriter') as _w:
-                    cap_df.to_excel(_w, index=False, sheet_name='Capability_Summary')
+                    cap_df.to_excel(_w, index=False, sheet_name='Capability_Log')
+                    if trend_data:
+                        trend_df.to_excel(_w, sheet_name='Capability_Trends')
+                
                 st.download_button(
-                    label="📥 Download Capability Summary Excel",
+                    label="📥 Download Capability Summary & Trends (Excel)",
                     data=cap_xlsx.getvalue(),
-                    file_name="Capability_Summary.xlsx",
+                    file_name="Capability_Summary_Trends.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
             except Exception:
@@ -644,14 +743,15 @@ if uploaded_file is not None:
         # Per-period distribution charts WITH inline Cp/Cpk/Ca badge
         # ----------------------------------------------------------
         tab2_saved_files = []
-        for period in selected_periods:
-            df_p = df_filtered[df_filtered['Time_Group'] == period]
-            if df_p.empty:
-                continue
+        for period in tab2_periods:
+            df_p = df_tab2[df_tab2['Time_Group'] == period]
+            if df_p.empty: continue
+            
             st.markdown(f"## 📅 Period: **{period}**")
             ov_y = get_shared_y(df_p, ['YS', 'TS', 'EL', 'YPE'])
             safe_period = "".join([c if c.isalnum() else "_" for c in period])
             cols = st.columns(2)
+            
             for idx, f in enumerate([x for x in ['YS', 'TS', 'EL', 'YPE'] if x in df_p.columns]):
                 with cols[idx % 2]:
                     fig, ax = plt.subplots(figsize=(8, 4.5))
@@ -661,17 +761,18 @@ if uploaded_file is not None:
                     tab2_saved_files.append(fname)
                     st.pyplot(fig)
                     plt.close(fig)
-                    # --- Capability badge ---
+                    
                     vals_all = df_p[f].dropna().values if f in df_p.columns else []
                     render_capability_badge(calc_capability(vals_all, f), f)
 
             for thick in thickness_list:
                 df_t = df_p[df_p['Actual_Thickness'] == thick]
-                if df_t.empty:
-                    continue
+                if df_t.empty: continue
+                
                 st.markdown(f"**📏 Thickness: {thick}mm**")
                 ly = get_shared_y(df_t, ['YS', 'TS', 'EL', 'YPE'])
                 tcols = st.columns(2)
+                
                 for idx, f in enumerate([x for x in ['YS', 'TS', 'EL', 'YPE'] if x in df_t.columns]):
                     with tcols[idx % 2]:
                         fig, ax = plt.subplots(figsize=(8, 4.5))
@@ -681,10 +782,9 @@ if uploaded_file is not None:
                         tab2_saved_files.append(fname)
                         st.pyplot(fig)
                         plt.close(fig)
-                        # --- Capability badge ---
+                        
                         vals_t = df_t[f].dropna().values if f in df_t.columns else []
                         render_capability_badge(calc_capability(vals_t, f), f)
-
     # ==========================================================
 # TAB 3: ROOT CAUSE & DIAGNOSTIC
     # ==========================================================
