@@ -1491,6 +1491,187 @@ if uploaded_file is not None:
                 )
             except Exception as e:
                 st.warning(f"Could not generate Excel: {e}")
+     # ==========================================================
+    # --- TAB 6: DYNAMIC CONTROL LIMITS (MILL VS RELEASE) ---
+    # ==========================================================
+    with tab6:
+        st.header("6. Data-Driven Control Limits (Mill vs. Release Range)")
+        st.info(
+            "Establish statistical control limits based on actual production data rather than static specs.\n\n"
+            "🛡️ **Mill Range:** Tighter internal control limits for early warning and process adjustment.\n"
+            "🚛 **Release Range:** Wider limits determining product acceptance for shipping."
+        )
+
+        # Target feature selector
+        feat_cols = [c for c in ['YS', 'TS', 'EL', 'YPE'] if c in df_filtered.columns]
+        if not feat_cols:
+            st.warning("No mechanical features available for analysis.")
+        else:
+            sel_feat = st.selectbox("🔍 Select Feature to Calculate Control Limits:", feat_cols)
+
+            st.markdown("### ⚙️ Parameter Configuration")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("#### 📉 Standard Deviation Method")
+                st.caption("Standard SPC. Sensitive to extreme outliers.")
+                std_mill = st.number_input("Mill Range (± Sigma)", 1.0, 3.0, 2.0, 0.5, key='std_m')
+                std_rel  = st.number_input("Release Range (± Sigma)", 1.0, 5.0, 3.0, 0.5, key='std_r')
+            with col2:
+                st.markdown("#### 📦 IQR Method (Robust)")
+                st.caption("Interquartile Range. Highly resistant to outliers.")
+                iqr_mill = st.number_input("Mill Range (± IQR from Q1/Q3)", 0.1, 1.5, 0.5, 0.1, key='iqr_m')
+                iqr_rel  = st.number_input("Release Range (± IQR from Q1/Q3)", 1.0, 3.0, 1.5, 0.1, key='iqr_r')
+
+            # ----------------------------------------------------------------
+            # DATA CALCULATION
+            # ----------------------------------------------------------------
+            limit_results = []
+            
+            # Using the same ordering map logic from previous tabs
+            local_order_map = {
+                "2024 (Full Year)": 1,
+                "2025 H1 (Until 06/28)": 2,
+                "2025 Q3 (06/29 - 09/30)": 3,
+                "2025 Q4 (Oct)": 4.1,
+                "2025 Q4 (Nov-Dec)": 4.2,
+                "2025 Q4": 4.5,
+                "2025 (Full Year)": 5,
+                "2026 Q1": 6
+            }
+            
+            available_periods = sorted(df_filtered['Time_Group'].unique(), key=lambda x: local_order_map.get(x, 99))
+
+            for p in available_periods:
+                vals = df_filtered[df_filtered['Time_Group'] == p][sel_feat].dropna().values
+                if len(vals) < 5:
+                    continue
+                
+                # --- STD Method ---
+                mu = np.mean(vals)
+                sigma = np.std(vals, ddof=1)
+                
+                std_mill_l = mu - (std_mill * sigma)
+                std_mill_u = mu + (std_mill * sigma)
+                std_rel_l  = mu - (std_rel * sigma)
+                std_rel_u  = mu + (std_rel * sigma)
+
+                # --- IQR Method ---
+                q1 = np.percentile(vals, 25)
+                q3 = np.percentile(vals, 75)
+                iqr = q3 - q1
+                
+                iqr_mill_l = q1 - (iqr_mill * iqr)
+                iqr_mill_u = q3 + (iqr_mill * iqr)
+                iqr_rel_l  = q1 - (iqr_rel * iqr)
+                iqr_rel_u  = q3 + (iqr_rel * iqr)
+
+                limit_results.append({
+                    'Time Period': p,
+                    'Sample (n)': len(vals),
+                    'Mean': mu,
+                    'Sigma': sigma,
+                    'Std Method - Mill LCL': std_mill_l,
+                    'Std Method - Mill UCL': std_mill_u,
+                    'Std Method - Rel LCL': std_rel_l,
+                    'Std Method - Rel UCL': std_rel_u,
+                    'IQR Method - Mill LCL': iqr_mill_l,
+                    'IQR Method - Mill UCL': iqr_mill_u,
+                    'IQR Method - Rel LCL': iqr_rel_l,
+                    'IQR Method - Rel UCL': iqr_rel_u,
+                    'Raw_Vals': vals # Store for plotting
+                })
+
+            if not limit_results:
+                st.warning("Not enough data to calculate control limits.")
+            else:
+                st.markdown("---")
+                st.subheader(f"📊 Calculated Ranges Summary: {sel_feat}")
+                
+                res_df = pd.DataFrame(limit_results).drop(columns=['Raw_Vals'])
+                
+                # Highlight table
+                def format_limits(df):
+                    format_dict = {'Sample (n)': '{:.0f}'}
+                    for c in df.columns:
+                        if c not in ['Time Period', 'Sample (n)']:
+                            format_dict[c] = '{:.2f}'
+                    return df.style.format(format_dict) \
+                             .set_properties(subset=[c for c in res_df.columns if 'Mill' in c], **{'background-color': '#fff3e0'}) \
+                             .set_properties(subset=[c for c in res_df.columns if 'Rel' in c], **{'background-color': '#ffebee'})
+                             
+                st.dataframe(format_limits(res_df), use_container_width=True, hide_index=True)
+
+                # ----------------------------------------------------------------
+                # VISUALIZATION
+                # ----------------------------------------------------------------
+                st.markdown("### 📈 Visual Range Comparison (Latest Period)")
+                
+                latest_data = limit_results[-1]
+                p_name = latest_data['Time Period']
+                plot_vals = latest_data['Raw_Vals']
+
+                fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+                
+                # Custom bins for better view
+                bins = np.linspace(np.min(plot_vals), np.max(plot_vals), 30)
+
+                # Plot 1: Standard Deviation
+                ax1.hist(plot_vals, bins=bins, color='#90caf9', edgecolor='white', alpha=0.8)
+                ax1.axvline(latest_data['Mean'], color='black', ls='--', label=f"Mean ({latest_data['Mean']:.1f})")
+                
+                # Mill Limits
+                ax1.axvline(latest_data['Std Method - Mill LCL'], color='#ff9800', lw=2, label=f'Mill LCL (-{std_mill}σ)')
+                ax1.axvline(latest_data['Std Method - Mill UCL'], color='#ff9800', lw=2, label=f'Mill UCL (+{std_mill}σ)')
+                ax1.axvspan(latest_data['Std Method - Mill LCL'], latest_data['Std Method - Mill UCL'], color='#ff9800', alpha=0.1)
+                
+                # Release Limits
+                ax1.axvline(latest_data['Std Method - Rel LCL'], color='#f44336', lw=2, label=f'Release LCL (-{std_rel}σ)')
+                ax1.axvline(latest_data['Std Method - Rel UCL'], color='#f44336', lw=2, label=f'Release UCL (+{std_rel}σ)')
+
+                ax1.set_title(f"Standard Deviation Method [{p_name}]", fontweight='bold')
+                ax1.legend(loc='upper right', fontsize=9)
+                ax1.set_xlabel(f"{sel_feat} Value")
+                ax1.set_ylabel("Frequency")
+
+                # Plot 2: IQR Method
+                ax2.hist(plot_vals, bins=bins, color='#a5d6a7', edgecolor='white', alpha=0.8)
+                q2 = np.median(plot_vals)
+                ax2.axvline(q2, color='black', ls='--', label=f"Median ({q2:.1f})")
+                
+                # Mill Limits
+                ax2.axvline(latest_data['IQR Method - Mill LCL'], color='#ff9800', lw=2, label=f'Mill LCL (-{iqr_mill} IQR)')
+                ax2.axvline(latest_data['IQR Method - Mill UCL'], color='#ff9800', lw=2, label=f'Mill UCL (+{iqr_mill} IQR)')
+                ax2.axvspan(latest_data['IQR Method - Mill LCL'], latest_data['IQR Method - Mill UCL'], color='#ff9800', alpha=0.1)
+                
+                # Release Limits
+                ax2.axvline(latest_data['IQR Method - Rel LCL'], color='#f44336', lw=2, label=f'Release LCL (-{iqr_rel} IQR)')
+                ax2.axvline(latest_data['IQR Method - Rel UCL'], color='#f44336', lw=2, label=f'Release UCL (+{iqr_rel} IQR)')
+
+                ax2.set_title(f"Robust IQR Method [{p_name}]", fontweight='bold')
+                ax2.legend(loc='upper right', fontsize=9)
+                ax2.set_xlabel(f"{sel_feat} Value")
+
+                fig.tight_layout()
+                plt.savefig("export_tab6_control_limits.png", bbox_inches='tight', dpi=150)
+                st.pyplot(fig)
+                plt.close(fig)
+
+                # ----------------------------------------------------------------
+                # DOWNLOAD
+                # ----------------------------------------------------------------
+                st.markdown("---")
+                output_limits = io.BytesIO()
+                try:
+                    with pd.ExcelWriter(output_limits, engine='xlsxwriter') as writer:
+                        res_df.to_excel(writer, index=False, sheet_name='Control_Limits')
+                    st.download_button(
+                        label="📥 Download Calculated Control Limits (Excel)",
+                        data=output_limits.getvalue(),
+                        file_name=f"{sel_feat}_Control_Limits.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                except Exception as e:
+                    st.warning(f"Could not generate Excel: {e}")           
     # ==========================================================
     # EXPORT PDF
     # ==========================================================
