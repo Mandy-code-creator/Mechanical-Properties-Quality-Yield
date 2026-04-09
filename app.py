@@ -774,7 +774,6 @@ if uploaded_file is not None:
         st.header("🧠 Executive Auto-Insight & Root Cause")
         st.info("Automated diagnostic engine: Quantifying impact based on severe defects (B+, B).")
 
-        # --- NEW: Q4 Drilldown Logic & Evidence Note ---
         st.success(
             "💡 **Q4 Improvement Verification:** '2025 Q4' has been automatically split into **October** "
             "and **Nov-Dec**. This isolates early-Q4 transition instability, providing evidence on whether "
@@ -900,11 +899,13 @@ if uploaded_file is not None:
                     use_container_width=True, hide_index=True
                 )
 
+            # ==========================================================
+            # UPDATED: Visual Hotspot Map with Boss's Requests
+            # ==========================================================
             st.markdown("---")
             st.subheader("🗺️ Evidence: Visual Hotspot Map (Grades B+ and Below)")
             heat_pivot = heat_data.unstack()
             
-            # --- Ensure proper chronological sorting with the new Q4 split ---
             local_order_map = {
                 "2024 (Full Year)": 1,
                 "2025 H1 (Until 06/28)": 2,
@@ -914,14 +915,37 @@ if uploaded_file is not None:
                 "2025 (Full Year)": 5,
                 "2026 Q1": 6
             }
+            
             if heat_pivot is not None and not heat_pivot.empty:
                 ordered_cols = sorted(heat_pivot.columns, key=lambda x: local_order_map.get(x, 99))
                 heat_pivot = heat_pivot.reindex(columns=ordered_cols)
 
                 fig, ax = plt.subplots(figsize=(12, 5))
                 vmax_threshold = 30.0 if heat_pivot.max().max() > 30 else heat_pivot.max().max()
+                
+                # Boss Request 1: Change grid lines to black (linecolor='black')
                 sns.heatmap(heat_pivot, annot=True, fmt=".1f", cmap="YlOrRd",
-                            linewidths=.5, vmax=vmax_threshold, ax=ax)
+                            linewidths=0.8, linecolor='black', vmax=vmax_threshold, ax=ax,
+                            annot_kws={"size": 10}) # Default font size
+
+                # Boss Request 2: Increase font size for Hotspots (>= 3.0%) in Q3 and Q4
+                q3_q4_cols = [c for c in heat_pivot.columns if 'Q3' in str(c) or 'Q4' in str(c)]
+                q3_q4_indices = [heat_pivot.columns.get_loc(c) for c in q3_q4_cols if c in heat_pivot.columns]
+                num_cols = len(heat_pivot.columns)
+
+                for i, text in enumerate(ax.texts):
+                    col_idx = i % num_cols
+                    val_str = text.get_text()
+                    if val_str:
+                        try:
+                            val = float(val_str)
+                            # If it is a hotspot (>= 3.0%) AND belongs to Q3 or Q4 columns
+                            if col_idx in q3_q4_indices and val >= 3.0:
+                                text.set_fontsize(15)
+                                text.set_fontweight('heavy')
+                        except ValueError:
+                            pass
+
                 ax.set_title("SEVERE DEFECT RATE (%)", fontweight='bold', color='#d62728')
                 ax.set_ylabel("")
                 ax.set_xlabel("")
