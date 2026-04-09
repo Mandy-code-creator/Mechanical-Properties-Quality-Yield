@@ -333,16 +333,27 @@ if uploaded_file is not None:
 
     # ==========================================================
     # ==========================================================
-   # ==========================================================
+# ==========================================================
     # --- TAB 2: DISTRIBUTION + Cp / Cpk / Ca ---
     # ==========================================================
     with tab2:
         st.header("📊 Distribution & Process Capability (SPC)")
         st.info(
-            "Visualizing hardness distribution and capability indices (Cp, Cpk, Ca). "
+            "Visualizing mechanical property distribution and capability indices (Cp, Cpk, Ca). "
             "Data is grouped by time period and thickness to identify precise process shifts."
         )
+
+        local_order_map = {
+            "2024 (Full Year)": 1,
+            "2025 H1 (Until 06/28)": 2,
+            "2025 Q3 (06/29 - 09/30)": 3,
+            "2025 Q4": 4,
+            "2025 (Full Year)": 5,
+            "2026 Q1": 6
+        }
         
+        ordered_periods = sorted(selected_periods, key=lambda x: local_order_map.get(x, 99))
+
         # ----------------------------------------------------------
         # CAPABILITY INDEX HELPERS
         # ----------------------------------------------------------
@@ -557,7 +568,7 @@ if uploaded_file is not None:
         # Build cross-period capability summary
         # ----------------------------------------------------------
         cap_summary_rows = []
-        for _p in selected_periods:  # Reverted back to selected_periods (Keeping Q4 intact)
+        for _p in ordered_periods:
             _dfp = df_filtered[df_filtered['Time_Group'] == _p]
             for _f in ['YS', 'TS', 'EL', 'YPE']:
                 row = build_capability_summary(_dfp, _f, _p)
@@ -580,7 +591,7 @@ if uploaded_file is not None:
             st.markdown("### 🔄 Cross-Period Comparison (Cpk, Cp, Ca Trend)")
             
             trend_data = []
-            for p in selected_periods:
+            for p in ordered_periods:
                 if p not in cap_df['Period / Segment'].values: continue
                 row = {'Period': p}
                 for feat in ['YS', 'TS', 'EL', 'YPE']:
@@ -655,7 +666,11 @@ if uploaded_file is not None:
                 else:
                     st.caption("ℹ️ Please select at least 2 periods in the sidebar filter to enable automated trend comparison.")
 
+            # ==========================================================
+            # DETAILED CAPABILITY LOG (SHOWING MEAN & STD)
+            # ==========================================================
             st.markdown("### 📋 Detailed Capability Log")
+            st.caption("Review the **Mean** values here to understand the root cause of high Ca (Centering Accuracy) deviations.")
             
             def color_cpk_cell(val):
                 if pd.isna(val): return ''
@@ -710,7 +725,7 @@ if uploaded_file is not None:
         tab2_saved_files = []
         thickness_list = sorted(df_filtered['Actual_Thickness'].dropna().unique())
         
-        for period in selected_periods: # Reverted back to selected_periods
+        for period in ordered_periods:
             df_p = df_filtered[df_filtered['Time_Group'] == period]
             if df_p.empty: continue
             
