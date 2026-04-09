@@ -1067,6 +1067,29 @@ if uploaded_file is not None:
             if missing_mask.any():
                 df_scrap_all.loc[missing_mask, COIL_ID_COL] = [f"UNKNOWN_ID_{i}" for i in df_scrap_all[missing_mask].index]
 
+            # --- NEW: Q4 Drilldown Logic for Consistent Timeline ---
+            def refine_q4_scrap(row):
+                if row['Time_Group'] == '2025 Q4' and pd.notna(row['烤三生產日期']):
+                    if row['烤三生產日期'].month == 10:
+                        return '2025 Q4 (Oct)'
+                    else:
+                        return '2025 Q4 (Nov-Dec)'
+                return row['Time_Group']
+                
+            if '烤三生產日期' in df_scrap_all.columns:
+                df_scrap_all['Time_Group'] = df_scrap_all.apply(refine_q4_scrap, axis=1)
+
+            # Local Order Map updated to include the new Q4 periods
+            local_order_map = {
+                "2024 (Full Year)": 1,
+                "2025 H1 (Until 06/28)": 2,
+                "2025 Q3 (06/29 - 09/30)": 3,
+                "2025 Q4 (Oct)": 4.1,
+                "2025 Q4 (Nov-Dec)": 4.2,
+                "2025 (Full Year)": 5,
+                "2026 Q1": 6
+            }
+
             # ----------------------------------------------------------------
             # 2. TOTAL SCRAP (Sum of ALL passes per coil per period)
             # ----------------------------------------------------------------
@@ -1143,7 +1166,7 @@ if uploaded_file is not None:
                 (scrap_by_period['Total_Scrap'] / scrap_by_period['Total_Length'] * 100),
                 0
             ).round(2)
-            scrap_by_period['Sort_Key'] = scrap_by_period['Time_Group'].map(time_order_map).fillna(99)
+            scrap_by_period['Sort_Key'] = scrap_by_period['Time_Group'].map(local_order_map).fillna(99)
             scrap_by_period = scrap_by_period.sort_values('Sort_Key').drop(columns=['Sort_Key'])
             scrap_by_period.rename(columns={'Time_Group': 'Time Period'}, inplace=True)
 
@@ -1196,7 +1219,7 @@ if uploaded_file is not None:
                 (scrap_detail['Total_Scrap'] / scrap_detail['Total_Length'] * 100),
                 0
             ).round(2)
-            scrap_detail['Sort_Key'] = scrap_detail['Time_Group'].map(time_order_map).fillna(99)
+            scrap_detail['Sort_Key'] = scrap_detail['Time_Group'].map(local_order_map).fillna(99)
             scrap_detail = scrap_detail.sort_values(
                 by=['Sort_Key', 'Actual_Thickness', 'HR_Material']
             ).drop(columns=['Sort_Key'])
@@ -1219,7 +1242,7 @@ if uploaded_file is not None:
                 ['Time_Group', 'Actual_Thickness']
             )['Scrap_Rate (%)'].mean().unstack()
             pivot_scrap = pivot_scrap.reindex(
-                sorted(pivot_scrap.index, key=lambda x: time_order_map.get(x, 99))
+                sorted(pivot_scrap.index, key=lambda x: local_order_map.get(x, 99))
             )
             fig2, ax2 = plt.subplots(figsize=(12, 5))
             pivot_scrap.plot(kind='bar', ax=ax2, colormap='YlOrRd', edgecolor='white')
@@ -1247,7 +1270,7 @@ if uploaded_file is not None:
                 ['Time_Group', 'HR_Material']
             )['Scrap_Rate (%)'].mean().unstack()
             pivot_scrap_mat = pivot_scrap_mat.reindex(
-                sorted(pivot_scrap_mat.index, key=lambda x: time_order_map.get(x, 99))
+                sorted(pivot_scrap_mat.index, key=lambda x: local_order_map.get(x, 99))
             )
             MATERIAL_COLORS = [
                 '#E63946', '#2A9D8F', '#E9C46A', '#457B9D',
@@ -1303,7 +1326,7 @@ if uploaded_file is not None:
             compare_df['Difference (pp)'] = (
                 compare_df['Scrap_Rate_Corrected (%)'] - compare_df['Scrap_Rate_Raw (%)']
             ).round(3)
-            compare_df['Sort_Key'] = compare_df['Time_Group'].map(time_order_map).fillna(99)
+            compare_df['Sort_Key'] = compare_df['Time_Group'].map(local_order_map).fillna(99)
             compare_df = compare_df.sort_values('Sort_Key').drop(columns=['Sort_Key'])
 
             def highlight_diff(val):
