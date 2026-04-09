@@ -115,7 +115,7 @@ if uploaded_file is not None:
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "1. Overview", "2. Capability", "3. Root Cause", 
     "4. Group Detail", "5. Tail Scrap", "6. Control Limits"
-])
+    ])
 
     with tab0:
         st.dataframe(df.head(10), use_container_width=True)
