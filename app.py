@@ -1140,8 +1140,7 @@ if uploaded_file is not None:
         render_tab4()
 
     # ==========================================================
-   # ==========================================================
-# ==========================================================
+  # ==========================================================
     # --- TAB 5: TAIL SCRAP ANALYSIS (COIL-ID AWARE) ---
     # ==========================================================
     with tab5:
@@ -1188,14 +1187,14 @@ if uploaded_file is not None:
             if '烤三生產日期' in df_scrap_all.columns:
                 df_scrap_all['Time_Group'] = df_scrap_all.apply(refine_q4_scrap, axis=1)
 
-            # Local Order Map updated to include the new Q4 periods
+            # Local Order Map updated to move 2025 Full Year next to 2024 Full Year
             local_order_map = {
                 "2024 (Full Year)": 1,
+                "2025 (Full Year)": 1.5,
                 "2025 H1 (Until 06/28)": 2,
                 "2025 Q3 (06/29 - 09/30)": 3,
                 "2025 Q4 (Oct)": 4.1,
                 "2025 Q4 (Nov-Dec)": 4.2,
-                "2025 (Full Year)": 5,
                 "2026 Q1": 6
             }
 
