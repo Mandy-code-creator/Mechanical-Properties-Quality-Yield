@@ -112,14 +112,10 @@ if uploaded_file is not None:
     }
 
     # --- TABS ---
-    tab0, tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "0. Raw Check",
-        "1. Yield Summary",
-        "2. Distribution Analysis",
-        "3. Root Cause & Diagnostic",
-        "4. I-MR Analysis",
-        "5. Scrap Analysis"
-    ])
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "1. Overview", "2. Capability", "3. Root Cause", 
+    "4. Group Detail", "5. Tail Scrap", "6. Control Limits"
+])
 
     with tab0:
         st.dataframe(df.head(10), use_container_width=True)
