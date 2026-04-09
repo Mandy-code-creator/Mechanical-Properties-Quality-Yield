@@ -333,51 +333,16 @@ if uploaded_file is not None:
 
     # ==========================================================
     # ==========================================================
+   # ==========================================================
     # --- TAB 2: DISTRIBUTION + Cp / Cpk / Ca ---
     # ==========================================================
     with tab2:
         st.header("📊 Distribution & Process Capability (SPC)")
-        
-        # --- NEW: Q4 Drilldown Logic for Consistent Timeline ---
         st.info(
-            "💡 **Timeline Consistency:** '2025 Q4' is automatically split into **October** "
-            "and **Nov-Dec** to accurately track process capability improvements."
+            "Visualizing hardness distribution and capability indices (Cp, Cpk, Ca). "
+            "Data is grouped by time period and thickness to identify precise process shifts."
         )
         
-        df_tab2 = df_filtered.copy()
-        
-        def refine_q4_tab2(row):
-            if row['Time_Group'] == '2025 Q4' and pd.notna(row.get('烤三生產日期')):
-                if row['烤三生產日期'].month == 10:
-                    return '2025 Q4 (Oct)'
-                else:
-                    return '2025 Q4 (Nov-Dec)'
-            return row['Time_Group']
-            
-        if '烤三生產日期' in df_tab2.columns:
-            df_tab2['Time_Group'] = df_tab2.apply(refine_q4_tab2, axis=1)
-
-        local_order_map = {
-            "2024 (Full Year)": 1,
-            "2025 H1 (Until 06/28)": 2,
-            "2025 Q3 (06/29 - 09/30)": 3,
-            "2025 Q4 (Oct)": 4.1,
-            "2025 Q4 (Nov-Dec)": 4.2,
-            "2025 (Full Year)": 5,
-            "2026 Q1": 6
-        }
-        
-        # Expand selected periods if Q4 is chosen
-        tab2_periods = []
-        for p in selected_periods:
-            if p == '2025 Q4':
-                tab2_periods.extend(['2025 Q4 (Oct)', '2025 Q4 (Nov-Dec)'])
-            else:
-                if p not in tab2_periods:
-                    tab2_periods.append(p)
-                    
-        tab2_periods = sorted(tab2_periods, key=lambda x: local_order_map.get(x, 99))
-
         # ----------------------------------------------------------
         # CAPABILITY INDEX HELPERS
         # ----------------------------------------------------------
@@ -592,8 +557,8 @@ if uploaded_file is not None:
         # Build cross-period capability summary
         # ----------------------------------------------------------
         cap_summary_rows = []
-        for _p in tab2_periods:
-            _dfp = df_tab2[df_tab2['Time_Group'] == _p]
+        for _p in selected_periods:  # Reverted back to selected_periods (Keeping Q4 intact)
+            _dfp = df_filtered[df_filtered['Time_Group'] == _p]
             for _f in ['YS', 'TS', 'EL', 'YPE']:
                 row = build_capability_summary(_dfp, _f, _p)
                 if row:
@@ -615,7 +580,7 @@ if uploaded_file is not None:
             st.markdown("### 🔄 Cross-Period Comparison (Cpk, Cp, Ca Trend)")
             
             trend_data = []
-            for p in tab2_periods:
+            for p in selected_periods:
                 if p not in cap_df['Period / Segment'].values: continue
                 row = {'Period': p}
                 for feat in ['YS', 'TS', 'EL', 'YPE']:
@@ -743,8 +708,10 @@ if uploaded_file is not None:
         # Per-period distribution charts WITH inline Cp/Cpk/Ca badge
         # ----------------------------------------------------------
         tab2_saved_files = []
-        for period in tab2_periods:
-            df_p = df_tab2[df_tab2['Time_Group'] == period]
+        thickness_list = sorted(df_filtered['Actual_Thickness'].dropna().unique())
+        
+        for period in selected_periods: # Reverted back to selected_periods
+            df_p = df_filtered[df_filtered['Time_Group'] == period]
             if df_p.empty: continue
             
             st.markdown(f"## 📅 Period: **{period}**")
