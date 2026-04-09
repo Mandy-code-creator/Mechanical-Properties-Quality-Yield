@@ -112,8 +112,8 @@ if uploaded_file is not None:
     }
 
     # --- TABS ---
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-    "1. Overview", "2. Capability", "3. Root Cause", 
+    tab 0, tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "0. Intro" ,1. Overview", "2. Capability", "3. Root Cause", 
     "4. Group Detail", "5. Tail Scrap", "6. Control Limits"
     ])
 
