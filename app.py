@@ -112,9 +112,14 @@ if uploaded_file is not None:
     }
 
     # --- TABS ---
-    tab 0, tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-    "0. Intro" ,1. Overview", "2. Capability", "3. Root Cause", 
-    "4. Group Detail", "5. Tail Scrap", "6. Control Limits"
+    tab0, tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "0. Intro",             # <- Thêm tên tab thứ 0 của bạn vào đây (ví dụ: "0. Intro" hoặc "0. Home")
+    "1. Overview", 
+    "2. Capability", 
+    "3. Root Cause", 
+    "4. Group Detail", 
+    "5. Tail Scrap", 
+    "6. Control Limits"
     ])
 
     with tab0:
