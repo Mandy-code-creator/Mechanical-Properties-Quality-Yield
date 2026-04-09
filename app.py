@@ -686,24 +686,44 @@ if uploaded_file is not None:
                         render_capability_badge(calc_capability(vals_t, f), f)
 
     # ==========================================================
-    # TAB 3: ROOT CAUSE & DIAGNOSTIC
+# TAB 3: ROOT CAUSE & DIAGNOSTIC
     # ==========================================================
     with tab3:
         st.header("🧠 Executive Auto-Insight & Root Cause")
         st.info("Automated diagnostic engine: Quantifying impact based on severe defects (B+, B).")
 
-        severe_grades = ['B+', 'B']
-        df_filtered['Severe_Bad_Qty'] = df_filtered[severe_grades].sum(axis=1)
-        df_filtered['Spec_Label'] = (
-            df_filtered['Actual_Thickness'].astype(str) + "mm (" + df_filtered['HR_Material'] + ")"
+        # --- NEW: Q4 Drilldown Logic & Evidence Note ---
+        st.success(
+            "💡 **Q4 Improvement Verification:** '2025 Q4' has been automatically split into **October** "
+            "and **Nov-Dec**. This isolates early-Q4 transition instability, providing evidence on whether "
+            "defects dropped after the new corrective actions took effect."
         )
 
-        heat_data = df_filtered.groupby(['Spec_Label', 'Time_Group']).apply(
+        df_tab3 = df_filtered.copy()
+
+        def refine_q4(row):
+            if row['Time_Group'] == '2025 Q4' and pd.notna(row['烤三生產日期']):
+                if row['烤三生產日期'].month == 10:
+                    return '2025 Q4 (Oct)'
+                else:
+                    return '2025 Q4 (Nov-Dec)'
+            return row['Time_Group']
+            
+        if '烤三生產日期' in df_tab3.columns:
+            df_tab3['Time_Group'] = df_tab3.apply(refine_q4, axis=1)
+
+        severe_grades = ['B+', 'B']
+        df_tab3['Severe_Bad_Qty'] = df_tab3[severe_grades].sum(axis=1)
+        df_tab3['Spec_Label'] = (
+            df_tab3['Actual_Thickness'].astype(str) + "mm (" + df_tab3['HR_Material'] + ")"
+        )
+
+        heat_data = df_tab3.groupby(['Spec_Label', 'Time_Group']).apply(
             lambda x: (x['Severe_Bad_Qty'].sum() / x['Total_Qty'].sum() * 100)
             if x['Total_Qty'].sum() > 0 else 0
         )
 
-        df_unique_global = df_filtered.drop_duplicates(subset=['Row_ID'])
+        df_unique_global = df_tab3.drop_duplicates(subset=['Row_ID'])
 
         if not heat_data.empty and heat_data.max() > 0:
             heatmap_long = heat_data.reset_index()
@@ -711,17 +731,19 @@ if uploaded_file is not None:
             top_issues = heatmap_long[heatmap_long['Defect_Rate'] > 0].sort_values(
                 'Defect_Rate', ascending=False
             ).head(5)
+            
             top_3_subsets = []
             for _, row in top_issues.head(3).iterrows():
-                subset = df_filtered[
-                    (df_filtered['Spec_Label'] == row['Spec']) &
-                    (df_filtered['Time_Group'] == row['Period'])
+                subset = df_tab3[
+                    (df_tab3['Spec_Label'] == row['Spec']) &
+                    (df_tab3['Time_Group'] == row['Period'])
                 ]
                 top_3_subsets.append(subset)
+            
             if top_3_subsets:
                 df_top3 = pd.concat(top_3_subsets).drop_duplicates(subset=['Row_ID'])
             else:
-                df_top3 = pd.DataFrame(columns=df_filtered.columns)
+                df_top3 = pd.DataFrame(columns=df_tab3.columns)
 
             rc_results = {}
             for f in ['YS', 'TS', 'EL', 'YPE']:
@@ -799,17 +821,32 @@ if uploaded_file is not None:
             st.markdown("---")
             st.subheader("🗺️ Evidence: Visual Hotspot Map (Grades B+ and Below)")
             heat_pivot = heat_data.unstack()
-            fig, ax = plt.subplots(figsize=(12, 5))
-            vmax_threshold = 30.0 if heat_pivot.max().max() > 30 else heat_pivot.max().max()
-            sns.heatmap(heat_pivot, annot=True, fmt=".1f", cmap="YlOrRd",
-                        linewidths=.5, vmax=vmax_threshold, ax=ax)
-            ax.set_title("SEVERE DEFECT RATE (%)", fontweight='bold', color='#d62728')
-            ax.set_ylabel("")
-            ax.set_xlabel("")
-            fig.tight_layout()
-            plt.savefig("export_heatmap.png", bbox_inches='tight', dpi=150)
-            st.pyplot(fig)
-            plt.close(fig)
+            
+            # --- Ensure proper chronological sorting with the new Q4 split ---
+            local_order_map = {
+                "2024 (Full Year)": 1,
+                "2025 H1 (Until 06/28)": 2,
+                "2025 Q3 (06/29 - 09/30)": 3,
+                "2025 Q4 (Oct)": 4.1,
+                "2025 Q4 (Nov-Dec)": 4.2,
+                "2025 (Full Year)": 5,
+                "2026 Q1": 6
+            }
+            if heat_pivot is not None and not heat_pivot.empty:
+                ordered_cols = sorted(heat_pivot.columns, key=lambda x: local_order_map.get(x, 99))
+                heat_pivot = heat_pivot.reindex(columns=ordered_cols)
+
+                fig, ax = plt.subplots(figsize=(12, 5))
+                vmax_threshold = 30.0 if heat_pivot.max().max() > 30 else heat_pivot.max().max()
+                sns.heatmap(heat_pivot, annot=True, fmt=".1f", cmap="YlOrRd",
+                            linewidths=.5, vmax=vmax_threshold, ax=ax)
+                ax.set_title("SEVERE DEFECT RATE (%)", fontweight='bold', color='#d62728')
+                ax.set_ylabel("")
+                ax.set_xlabel("")
+                fig.tight_layout()
+                plt.savefig("export_heatmap.png", bbox_inches='tight', dpi=150)
+                st.pyplot(fig)
+                plt.close(fig)
 
         else:
             st.success("✅ Process is completely stable. No severe defect patterns detected.")
@@ -893,7 +930,6 @@ if uploaded_file is not None:
                         plt.savefig(f"export_imr_global_{feat}.png", bbox_inches='tight', dpi=150)
                         st.pyplot(fig)
                         plt.close(fig)
-
     # ==========================================================
     # TAB 4: I-MR CHART
     # ==========================================================
