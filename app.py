@@ -1675,7 +1675,7 @@ if uploaded_file is not None:
 
             st.dataframe(pd.DataFrame(thick_status), use_container_width=True, hide_index=True)
             
-            # --- I-MR CHARTS PLOTTING ---
+           # --- I-MR CHARTS PLOTTING ---
             cols_imr = st.columns(2)
             top4 = [f for f in ['YS', 'TS', 'EL', 'YPE'] if f in plot_data_dict[thick]]
             
@@ -1712,12 +1712,14 @@ if uploaded_file is not None:
                         
                         trans1 = ax1.get_yaxis_transform()
                         ax1.text(1.02, mv, f"Mean: {mv:.1f}", color='green', transform=trans1, va='center', fontweight='bold')
-                        ax1.text(1.02, ucl, f"UCL: {ucl:.1f}", color='red', transform=trans1, va='center', fontweight='bold')
-                        ax1.text(1.02, lcl, f"LCL: {lcl:.1f}", color='red', transform=trans1, va='center', fontweight='bold')
+                        # ADDED SIGMA NOTATION HERE:
+                        ax1.text(1.02, ucl, f"UCL (+{sigma_release}σ): {ucl:.1f}", color='red', transform=trans1, va='center', fontweight='bold')
+                        ax1.text(1.02, lcl, f"LCL (-{sigma_release}σ): {lcl:.1f}", color='red', transform=trans1, va='center', fontweight='bold')
                         ax1.text(1.02, v_max, f"Max: {v_max:.1f}", color='gray', transform=trans1, va='center')
                         ax1.text(1.02, v_min, f"Min: {v_min:.1f}", color='gray', transform=trans1, va='center')
 
-                        ax1.set_title(f"I-Chart: {f} ({chart_method})", fontsize=11, fontweight='bold')
+                        # ADDED SIGMA NOTATION TO TITLE:
+                        ax1.set_title(f"I-Chart: {f} ({chart_method} | Limits: ±{sigma_release}σ)", fontsize=11, fontweight='bold')
                         ax1.set_ylabel("Value")
                         
                         # MR-Chart
@@ -1738,10 +1740,12 @@ if uploaded_file is not None:
                         
                         trans2 = ax2.get_yaxis_transform()
                         ax2.text(1.02, mrm, f"Mean: {mrm:.1f}", color='green', transform=trans2, va='center', fontweight='bold')
-                        ax2.text(1.02, mru, f"UCL: {mru:.1f}", color='red', transform=trans2, va='center', fontweight='bold')
+                        # ADDED FIXED 3 SIGMA NOTATION HERE (MR limits are statistically fixed at 3 sigma for n=2):
+                        ax2.text(1.02, mru, f"UCL (+3σ): {mru:.1f}", color='red', transform=trans2, va='center', fontweight='bold')
                         ax2.text(1.02, mr_max, f"Max: {mr_max:.1f}", color='gray', transform=trans2, va='center')
 
-                        ax2.set_title("Moving Range", fontsize=10)
+                        # ADDED FIXED 3 SIGMA NOTATION TO TITLE:
+                        ax2.set_title("Moving Range (Standard +3σ Limit)", fontsize=10)
                         ax2.set_ylabel("Range")
                         
                         fig.tight_layout()
