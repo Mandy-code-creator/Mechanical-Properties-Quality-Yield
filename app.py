@@ -1038,7 +1038,7 @@ if uploaded_file is not None:
                         plt.savefig(f"export_imr_global_{feat}.png", bbox_inches='tight', dpi=150)
                         st.pyplot(fig)
                         plt.close(fig)
-                        
+
     # ==========================================================
     # TAB 4: I-MR CHART
     # ==========================================================
