@@ -1542,6 +1542,8 @@ if uploaded_file is not None:
             m_std = np.average(v_arr, weights=w_arr)
             s_std = np.sqrt(np.average((v_arr - m_std)**2, weights=w_arr))
             
+            lower_iqr, upper_iqr = None, None
+            
             # 2. IQR Filtered Method
             try:
                 # Expand values based on weights for accurate percentiles
@@ -1564,7 +1566,7 @@ if uploaded_file is not None:
             except:
                 m_iqr, s_iqr = m_std, s_std
                 
-            return (m_std, s_std), (m_iqr, s_iqr)
+            return (m_std, s_std), (m_iqr, s_iqr), (lower_iqr, upper_iqr)
 
         all_export_data = []
         
@@ -1578,7 +1580,6 @@ if uploaded_file is not None:
         
         for feat in ['YS', 'TS', 'EL', 'YPE']:
             if feat in df_filtered.columns:
-                # CHANGE: Use Valid_Qty instead of Total_Qty
                 df_ov = df_filtered[[feat, 'Valid_Qty']].dropna(subset=[feat]).copy()
                 df_ov = df_ov[df_ov['Valid_Qty'] > 0]
                 
@@ -1587,24 +1588,27 @@ if uploaded_file is not None:
 
                 if not df_ov.empty:
                     v, w = df_ov[feat].values, df_ov['Valid_Qty'].values
-                    # Safe check for integer weights
                     w = np.where(pd.isna(w) | (w <= 0), 1, w).astype(int)
                     
-                    (m_std, s_std), (m_iqr, s_iqr) = calculate_stats(v, w, iqr_k)
+                    # Trích xuất thêm ranh giới lọc IQR (lower_iqr, upper_iqr)
+                    (m_std, s_std), (m_iqr, s_iqr), (lower_iqr, upper_iqr) = calculate_stats(v, w, iqr_k)
+                    
+                    iqr_bound_str = f"{max(0, lower_iqr):.1f} - {upper_iqr:.1f}" if lower_iqr is not None else "N/A"
                     
                     methods_data = [
-                        ("Standard", m_std, s_std),
-                        (f"IQR (k={iqr_k})", m_iqr, s_iqr)
+                        ("Standard", m_std, s_std, "N/A"),
+                        (f"IQR (k={iqr_k})", m_iqr, s_iqr, iqr_bound_str)
                     ]
                     
-                    for method_name, m_val, s_val in methods_data:
+                    for method_name, m_val, s_val, filter_bound in methods_data:
                         mill_lower = max(0, int(round(m_val - sigma_mill * s_val)))
                         release_lower = max(0, int(round(m_val - sigma_release * s_val)))
                         
                         overall_export_data.append({
                             "Feature": feat, 
                             "Method": method_name,
-                            "Current Limit": spec_str_ov, 
+                            "Current Limit": spec_str_ov,
+                            "IQR Filter Boundary": filter_bound, # <--- CỘT HIỂN THỊ MỚI
                             "TARGET GOAL": int(round(m_val)),
                             "TOLERANCE": round(s_val, 2),
                             f"MILL RANGE {sigma_mill}σ": f"{mill_lower} - {int(round(m_val + sigma_mill*s_val))}",
@@ -1630,7 +1634,6 @@ if uploaded_file is not None:
             
             for feat in ['YS', 'TS', 'EL', 'YPE']:
                 if feat in df_t.columns:
-                    # CHANGE: Use Valid_Qty instead of Total_Qty
                     temp_calc = df_t[[feat, 'Valid_Qty', '烤三生產日期']].dropna(subset=[feat]).copy()
                     temp_calc = temp_calc[temp_calc['Valid_Qty'] > 0]
                 
@@ -1641,7 +1644,7 @@ if uploaded_file is not None:
                         v, w = temp_calc[feat].values, temp_calc['Valid_Qty'].values
                         w = np.where(pd.isna(w) | (w <= 0), 1, w).astype(int)
                         
-                        (m_std, s_std), (m_iqr, s_iqr) = calculate_stats(v, w, iqr_k)
+                        (m_std, s_std), (m_iqr, s_iqr), (lower_iqr, upper_iqr) = calculate_stats(v, w, iqr_k)
                         
                         plot_data_dict[thick][feat] = {
                             'values': v, 
@@ -1649,12 +1652,14 @@ if uploaded_file is not None:
                             'mean_iqr': m_iqr, 'std_iqr': s_iqr
                         }
                         
+                        iqr_bound_str = f"{max(0, lower_iqr):.1f} - {upper_iqr:.1f}" if lower_iqr is not None else "N/A"
+                        
                         methods_data = [
-                            ("Standard", m_std, s_std),
-                            (f"IQR (k={iqr_k})", m_iqr, s_iqr)
+                            ("Standard", m_std, s_std, "N/A"),
+                            (f"IQR (k={iqr_k})", m_iqr, s_iqr, iqr_bound_str)
                         ]
                         
-                        for method_name, m_val, s_val in methods_data:
+                        for method_name, m_val, s_val, filter_bound in methods_data:
                             mill_lower = max(0, int(round(m_val - sigma_mill * s_val)))
                             release_lower = max(0, int(round(m_val - sigma_release * s_val)))
                             
@@ -1662,6 +1667,7 @@ if uploaded_file is not None:
                                 "Feature": feat, 
                                 "Method": method_name,
                                 "Current Limit": spec_str,
+                                "IQR Filter Boundary": filter_bound, # <--- CỘT HIỂN THỊ MỚI
                                 "TARGET GOAL": int(round(m_val)),
                                 "TOLERANCE": round(s_val, 2),
                                 f"MILL RANGE {sigma_mill}σ": f"{mill_lower} - {int(round(m_val + sigma_mill*s_val))}",
@@ -1675,7 +1681,7 @@ if uploaded_file is not None:
 
             st.dataframe(pd.DataFrame(thick_status), use_container_width=True, hide_index=True)
             
-           # --- I-MR CHARTS PLOTTING ---
+            # --- I-MR CHARTS PLOTTING ---
             cols_imr = st.columns(2)
             top4 = [f for f in ['YS', 'TS', 'EL', 'YPE'] if f in plot_data_dict[thick]]
             
@@ -1712,13 +1718,11 @@ if uploaded_file is not None:
                         
                         trans1 = ax1.get_yaxis_transform()
                         ax1.text(1.02, mv, f"Mean: {mv:.1f}", color='green', transform=trans1, va='center', fontweight='bold')
-                        # ADDED SIGMA NOTATION HERE:
                         ax1.text(1.02, ucl, f"UCL (+{sigma_release}σ): {ucl:.1f}", color='red', transform=trans1, va='center', fontweight='bold')
                         ax1.text(1.02, lcl, f"LCL (-{sigma_release}σ): {lcl:.1f}", color='red', transform=trans1, va='center', fontweight='bold')
                         ax1.text(1.02, v_max, f"Max: {v_max:.1f}", color='gray', transform=trans1, va='center')
                         ax1.text(1.02, v_min, f"Min: {v_min:.1f}", color='gray', transform=trans1, va='center')
 
-                        # ADDED SIGMA NOTATION TO TITLE:
                         ax1.set_title(f"I-Chart: {f} ({chart_method} | Limits: ±{sigma_release}σ)", fontsize=11, fontweight='bold')
                         ax1.set_ylabel("Value")
                         
@@ -1740,11 +1744,9 @@ if uploaded_file is not None:
                         
                         trans2 = ax2.get_yaxis_transform()
                         ax2.text(1.02, mrm, f"Mean: {mrm:.1f}", color='green', transform=trans2, va='center', fontweight='bold')
-                        # ADDED FIXED 3 SIGMA NOTATION HERE (MR limits are statistically fixed at 3 sigma for n=2):
                         ax2.text(1.02, mru, f"UCL (+3σ): {mru:.1f}", color='red', transform=trans2, va='center', fontweight='bold')
                         ax2.text(1.02, mr_max, f"Max: {mr_max:.1f}", color='gray', transform=trans2, va='center')
 
-                        # ADDED FIXED 3 SIGMA NOTATION TO TITLE:
                         ax2.set_title("Moving Range (Standard +3σ Limit)", fontsize=10)
                         ax2.set_ylabel("Range")
                         
@@ -1768,7 +1770,7 @@ if uploaded_file is not None:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
         except Exception as e:
-            st.warning(f"Could not generate Excel: {e}") 
+            st.warning(f"Could not generate Excel: {e}")
     # ==========================================================
     # EXPORT PDF
     # ==========================================================
