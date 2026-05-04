@@ -18,15 +18,15 @@ uploaded_file = st.file_uploader("Upload Excel data (.xlsx)", type=["xlsx"])
 
 if uploaded_file is not None:
     # --- DYNAMIC SPEC LIMITS INPUT ---
-    st.sidebar.header("⚙️ Tiêu chuẩn Spec (Tùy chọn)")
-    st.sidebar.info("Nhập giới hạn cho biểu đồ. Bỏ trống nếu không muốn hiển thị đường giới hạn.")
+    st.sidebar.header("⚙️ Spec Limits (Optional)")
+    st.sidebar.info("Enter limits for the charts. Leave blank if you don't want to display limit lines.")
     GLOBAL_SPECS = {}
     for feat in ['YS', 'TS', 'EL', 'YPE']:
-        with st.sidebar.expander(f"Cấu hình {feat}"):
+        with st.sidebar.expander(f"{feat} Configuration"):
             c1, c2 = st.columns(2)
             min_val = c1.number_input(f"Min", value=None, key=f"{feat}_min")
             max_val = c2.number_input(f"Max", value=None, key=f"{feat}_max")
-            tgt_val = st.number_input(f"Target (Mục tiêu)", value=None, key=f"{feat}_tgt")
+            tgt_val = st.number_input(f"Target", value=None, key=f"{feat}_tgt")
             GLOBAL_SPECS[feat] = {'min': min_val, 'max': max_val, 'target': tgt_val}
 
     df = pd.read_excel(uploaded_file)
@@ -873,7 +873,7 @@ if uploaded_file is not None:
                 )
 
             # ==========================================================
-            # UPDATED: Visual Hotspot Map (Enlarged Q3/Q4 Labels)
+            # Visual Hotspot Map (Enlarged Q3/Q4 Labels)
             # ==========================================================
             st.markdown("---")
             st.subheader("🗺️ Evidence: Visual Hotspot Map (Grades B+ and Below)")
@@ -911,14 +911,13 @@ if uploaded_file is not None:
                         except ValueError:
                             pass
 
-                # NEW: Enlarge x-axis labels specifically for Q3 and Q4
                 for label in ax.get_xticklabels():
                     text_str = label.get_text()
                     if 'Q3' in text_str or 'Q4' in text_str:
                         label.set_fontsize(13)
                         label.set_fontweight('bold')
                     else:
-                        label.set_fontsize(10) # Default size for others
+                        label.set_fontsize(10)
 
                 ax.set_title("SEVERE DEFECT RATE (%)", fontweight='bold', color='#d62728')
                 ax.set_ylabel("")
@@ -1146,7 +1145,7 @@ if uploaded_file is not None:
             if missing_mask.any():
                 df_scrap_all.loc[missing_mask, COIL_ID_COL] = [f"UNKNOWN_ID_{i}" for i in df_scrap_all[missing_mask].index]
 
-            # --- NEW: Q4 Drilldown Logic for Consistent Timeline ---
+            # --- Q4 Drilldown Logic for Consistent Timeline ---
             def refine_q4_scrap(row):
                 if row['Time_Group'] == '2025 Q4' and pd.notna(row['烤三生產日期']):
                     if row['烤三生產日期'].month == 10:
@@ -1561,6 +1560,7 @@ if uploaded_file is not None:
                     v, w = df_ov[feat].values, df_ov['Valid_Qty'].values
                     w = np.where(pd.isna(w) | (w <= 0), 1, w).astype(int)
                     
+                    # Extract IQR filter boundaries (lower_iqr, upper_iqr)
                     (m_std, s_std), (m_iqr, s_iqr), (lower_iqr, upper_iqr) = calculate_stats(v, w, iqr_k)
                     
                     iqr_bound_str = f"{max(0, lower_iqr):.1f} - {upper_iqr:.1f}" if lower_iqr is not None else "N/A"
@@ -1578,7 +1578,7 @@ if uploaded_file is not None:
                             "Feature": feat, 
                             "Method": method_name,
                             "Current Limit": spec_str_ov,
-                            "IQR Filter Boundary": filter_bound,
+                            "IQR Filter Boundary": filter_bound, # <--- NEW DISPLAY COLUMN
                             "TARGET GOAL": int(round(m_val)),
                             "TOLERANCE": round(s_val, 2),
                             f"MILL RANGE {sigma_mill}σ": f"{mill_lower} - {int(round(m_val + sigma_mill*s_val))}",
@@ -1637,7 +1637,7 @@ if uploaded_file is not None:
                                 "Feature": feat, 
                                 "Method": method_name,
                                 "Current Limit": spec_str,
-                                "IQR Filter Boundary": filter_bound,
+                                "IQR Filter Boundary": filter_bound, # <--- NEW DISPLAY COLUMN
                                 "TARGET GOAL": int(round(m_val)),
                                 "TOLERANCE": round(s_val, 2),
                                 f"MILL RANGE {sigma_mill}σ": f"{mill_lower} - {int(round(m_val + sigma_mill*s_val))}",
