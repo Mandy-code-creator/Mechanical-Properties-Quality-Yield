@@ -1502,9 +1502,10 @@ if uploaded_file is not None:
         st.info(
             "Establish statistical control limits based on actual production data.\n\n"
             "🛡️ **Mill Range:** Tighter internal limits for early warning.\n"
-            "🚛 **Release Range:** Wider limits determining product acceptance."
+            "🚛 **Release Range:** Wider limits determining product acceptance.\n\n"
+            "🎯 **Data Filter:** Giới hạn thống kê và biểu đồ CHỈ ĐƯỢC TÍNH TOÁN dựa trên các cuộn thép đạt chất lượng từ **A-B- trở lên (A-B+, A-B, A-B-)**."
         )
-        
+
         # --- DYNAMIC CONTROLS ---
         st.markdown("### ⚙️ Parameter Configuration")
         col1, col2, col3, col4 = st.columns(4)
@@ -1522,6 +1523,17 @@ if uploaded_file is not None:
                        "TS": (GLOBAL_SPECS.get('TS', {}).get('min'), GLOBAL_SPECS.get('TS', {}).get('max')), 
                        "EL": (GLOBAL_SPECS.get('EL', {}).get('min'), GLOBAL_SPECS.get('EL', {}).get('max')), 
                        "YPE": (GLOBAL_SPECS.get('YPE', {}).get('min'), GLOBAL_SPECS.get('YPE', {}).get('max'))}
+
+        # ================================================================
+        # BƯỚC CẬP NHẬT LOGIC: TẠO KHỐI LƯỢNG HỢP LỆ (TỪ A-B- TRỞ LÊN)
+        # ================================================================
+        target_grades = ['A-B+', 'A-B', 'A-B-']
+        # Đảm bảo các cột này tồn tại, nếu không có thì gán 0
+        for g in target_grades:
+            if g not in df_filtered.columns:
+                df_filtered[g] = 0
+                
+        df_filtered['Valid_Qty'] = df_filtered[target_grades].sum(axis=1)
 
         # --- CALCULATION LOGIC (STANDARD & IQR) ---
         def calculate_stats(v_arr, w_arr, k_factor):
@@ -1565,14 +1577,15 @@ if uploaded_file is not None:
         
         for feat in ['YS', 'TS', 'EL', 'YPE']:
             if feat in df_filtered.columns:
-                df_ov = df_filtered[[feat, 'Total_Qty']].dropna(subset=[feat]).copy()
-                df_ov = df_ov[df_ov['Total_Qty'] > 0]
+                # THAY ĐỔI: Sử dụng Valid_Qty thay vì Total_Qty
+                df_ov = df_filtered[[feat, 'Valid_Qty']].dropna(subset=[feat]).copy()
+                df_ov = df_ov[df_ov['Valid_Qty'] > 0]
                 
                 low, high = spec_limits.get(feat, (None, None))
                 spec_str_ov = f"{int(low)}-{int(high)}" if pd.notnull(low) and pd.notnull(high) else (f">={int(low)}" if pd.notnull(low) else "N/A")
 
                 if not df_ov.empty:
-                    v, w = df_ov[feat].values, df_ov['Total_Qty'].values
+                    v, w = df_ov[feat].values, df_ov['Valid_Qty'].values
                     # Safe check for integer weights
                     w = np.where(pd.isna(w) | (w <= 0), 1, w).astype(int)
                     
@@ -1616,14 +1629,15 @@ if uploaded_file is not None:
             
             for feat in ['YS', 'TS', 'EL', 'YPE']:
                 if feat in df_t.columns:
-                    temp_calc = df_t[[feat, 'Total_Qty', '烤三生產日期']].dropna(subset=[feat]).copy()
-                    temp_calc = temp_calc[temp_calc['Total_Qty'] > 0]
+                    # THAY ĐỔI: Sử dụng Valid_Qty thay vì Total_Qty
+                    temp_calc = df_t[[feat, 'Valid_Qty', '烤三生產日期']].dropna(subset=[feat]).copy()
+                    temp_calc = temp_calc[temp_calc['Valid_Qty'] > 0]
                 
                     low, high = spec_limits.get(feat, (None, None))
                     spec_str = f"{int(low)}-{int(high)}" if pd.notnull(low) and pd.notnull(high) else (f">={int(low)}" if pd.notnull(low) else "N/A")
 
                     if not temp_calc.empty:
-                        v, w = temp_calc[feat].values, temp_calc['Total_Qty'].values
+                        v, w = temp_calc[feat].values, temp_calc['Valid_Qty'].values
                         w = np.where(pd.isna(w) | (w <= 0), 1, w).astype(int)
                         
                         (m_std, s_std), (m_iqr, s_iqr) = calculate_stats(v, w, iqr_k)
@@ -1749,7 +1763,7 @@ if uploaded_file is not None:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
         except Exception as e:
-            st.warning(f"Could not generate Excel: {e}")        
+            st.warning(f"Could not generate Excel: {e}")   
     # ==========================================================
     # EXPORT PDF
     # ==========================================================
