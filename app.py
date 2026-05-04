@@ -14,16 +14,21 @@ st.set_page_config(page_title="Quality Dashboard", layout="wide")
 st.title("📊 Production Quality Yield & Distribution")
 st.markdown("---")
 
-GLOBAL_SPECS = {
-    'YS': {'min': 400, 'max': 460, 'target': 430},
-    'TS': {'min': 410, 'max': 470, 'target': 440},
-    'EL': {'min': 25, 'max': None, 'target': None},
-    'YPE': {'min': 4, 'max': None, 'target': None}
-}
-
 uploaded_file = st.file_uploader("Upload Excel data (.xlsx)", type=["xlsx"])
 
 if uploaded_file is not None:
+    # --- DYNAMIC SPEC LIMITS INPUT ---
+    st.sidebar.header("⚙️ Tiêu chuẩn Spec (Tùy chọn)")
+    st.sidebar.info("Nhập giới hạn cho biểu đồ. Bỏ trống nếu không muốn hiển thị đường giới hạn.")
+    GLOBAL_SPECS = {}
+    for feat in ['YS', 'TS', 'EL', 'YPE']:
+        with st.sidebar.expander(f"Cấu hình {feat}"):
+            c1, c2 = st.columns(2)
+            min_val = c1.number_input(f"Min", value=None, key=f"{feat}_min")
+            max_val = c2.number_input(f"Max", value=None, key=f"{feat}_max")
+            tgt_val = st.number_input(f"Target (Mục tiêu)", value=None, key=f"{feat}_tgt")
+            GLOBAL_SPECS[feat] = {'min': min_val, 'max': max_val, 'target': tgt_val}
+
     df = pd.read_excel(uploaded_file)
     df.columns = df.columns.astype(str).str.strip()
 
@@ -113,7 +118,7 @@ if uploaded_file is not None:
 
     # --- TABS ---
     tab0, tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-    "0. Intro",             # <- Thêm tên tab thứ 0 của bạn vào đây (ví dụ: "0. Intro" hoặc "0. Home")
+    "0. Intro",             
     "1. Overview", 
     "2. Capability", 
     "3. Root Cause", 
@@ -333,8 +338,6 @@ if uploaded_file is not None:
             )
 
     # ==========================================================
-    # ==========================================================
-# ==========================================================
     # --- TAB 2: DISTRIBUTION + Cp / Cpk / Ca ---
     # ==========================================================
     with tab2:
@@ -635,38 +638,6 @@ if uploaded_file is not None:
                 styled_trend = trend_df.style.apply(style_trend_table, axis=None).format(format_dict, na_rep="—")
                 st.dataframe(styled_trend, use_container_width=True)
 
-                # ==========================================================
-                # AUTOMATED TREND CONCLUSION
-                # ==========================================================
-                st.markdown("#### 💡 Automated Trend Conclusion")
-                periods_list = trend_df.index.tolist()
-                
-                if len(periods_list) >= 2:
-                    first_p = periods_list[0]
-                    last_p = periods_list[-1]
-                    
-                    for feat in ['YS', 'TS', 'EL', 'YPE']:
-                        cpk_col = f"{feat} Cpk"
-                        if cpk_col in trend_df.columns:
-                            val_first = trend_df.at[first_p, cpk_col]
-                            val_last = trend_df.at[last_p, cpk_col]
-                            
-                            if pd.isna(val_first) or pd.isna(val_last): continue
-                            
-                            diff = val_last - val_first
-                            
-                            if diff >= 0.05: trend_status = "📈 **Improving**"
-                            elif diff <= -0.05: trend_status = "📉 **Declining**"
-                            else: trend_status = "➡️ **Stable**"
-                            
-                            if val_last >= 1.33: risk_status = "✅ **Safe** (Capable)"
-                            elif val_last >= 1.00: risk_status = "⚠️ **Warning** (Marginal)"
-                            else: risk_status = "❌ **Danger** (Not Capable)"
-                            
-                            st.info(f"**{feat}:** Compared to [{first_p}], the capability (Cpk) in [{last_p}] shifted from **{val_first:.2f}** to **{val_last:.2f}** ➔ Trend: {trend_status}. Current Status: {risk_status}.")
-                else:
-                    st.caption("ℹ️ Please select at least 2 periods in the sidebar filter to enable automated trend comparison.")
-
             # ==========================================================
             # DETAILED CAPABILITY LOG (SHOWING MEAN & STD)
             # ==========================================================
@@ -768,8 +739,9 @@ if uploaded_file is not None:
                         
                         vals_t = df_t[f].dropna().values if f in df_t.columns else []
                         render_capability_badge(calc_capability(vals_t, f), f)
+
     # ==========================================================
-# TAB 3: ROOT CAUSE & DIAGNOSTIC
+    # TAB 3: ROOT CAUSE & DIAGNOSTIC
     # ==========================================================
     with tab3:
         st.header("🧠 Executive Auto-Insight & Root Cause")
@@ -1140,7 +1112,6 @@ if uploaded_file is not None:
         render_tab4()
 
     # ==========================================================
-  # ==========================================================
     # --- TAB 5: TAIL SCRAP ANALYSIS (COIL-ID AWARE) ---
     # ==========================================================
     with tab5:
@@ -1493,8 +1464,8 @@ if uploaded_file is not None:
                 )
             except Exception as e:
                 st.warning(f"Could not generate Excel: {e}")
-     # ==========================================================
-# ==========================================================
+
+    # ==========================================================
     # --- TAB 6: DYNAMIC CONTROL LIMITS & I-MR CHARTS ---
     # ==========================================================
     with tab6:
@@ -1590,7 +1561,6 @@ if uploaded_file is not None:
                     v, w = df_ov[feat].values, df_ov['Valid_Qty'].values
                     w = np.where(pd.isna(w) | (w <= 0), 1, w).astype(int)
                     
-                    # Trích xuất thêm ranh giới lọc IQR (lower_iqr, upper_iqr)
                     (m_std, s_std), (m_iqr, s_iqr), (lower_iqr, upper_iqr) = calculate_stats(v, w, iqr_k)
                     
                     iqr_bound_str = f"{max(0, lower_iqr):.1f} - {upper_iqr:.1f}" if lower_iqr is not None else "N/A"
@@ -1608,7 +1578,7 @@ if uploaded_file is not None:
                             "Feature": feat, 
                             "Method": method_name,
                             "Current Limit": spec_str_ov,
-                            "IQR Filter Boundary": filter_bound, # <--- CỘT HIỂN THỊ MỚI
+                            "IQR Filter Boundary": filter_bound,
                             "TARGET GOAL": int(round(m_val)),
                             "TOLERANCE": round(s_val, 2),
                             f"MILL RANGE {sigma_mill}σ": f"{mill_lower} - {int(round(m_val + sigma_mill*s_val))}",
@@ -1667,7 +1637,7 @@ if uploaded_file is not None:
                                 "Feature": feat, 
                                 "Method": method_name,
                                 "Current Limit": spec_str,
-                                "IQR Filter Boundary": filter_bound, # <--- CỘT HIỂN THỊ MỚI
+                                "IQR Filter Boundary": filter_bound,
                                 "TARGET GOAL": int(round(m_val)),
                                 "TOLERANCE": round(s_val, 2),
                                 f"MILL RANGE {sigma_mill}σ": f"{mill_lower} - {int(round(m_val + sigma_mill*s_val))}",
@@ -1785,6 +1755,7 @@ if uploaded_file is not None:
             )
         except Exception as e:
             st.warning(f"Could not generate Excel: {e}")
+
     # ==========================================================
     # EXPORT PDF
     # ==========================================================
