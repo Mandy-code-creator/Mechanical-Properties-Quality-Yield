@@ -362,9 +362,6 @@ if uploaded_file is not None:
         # CAPABILITY INDEX HELPERS
         # ----------------------------------------------------------
         def calc_capability(values, feat):
-            """
-            Return dict with mean, std, Cp, Cpk, Ca (None if spec missing).
-            """
             vals = np.array(values, dtype=float)
             vals = vals[~np.isnan(vals)]
             if len(vals) < 2:
@@ -409,7 +406,6 @@ if uploaded_file is not None:
             return result
 
         def cpk_color(cpk):
-            """Traffic-light color for Cpk."""
             if cpk is None: return '#888888'
             if cpk >= 1.67: return '#2e7d32'   # excellent
             if cpk >= 1.33: return '#66bb6a'   # capable
@@ -424,7 +420,6 @@ if uploaded_file is not None:
             return '❌ Not Capable'
 
         def render_capability_badge(cap, feat):
-            """Render a compact colored HTML badge row below each chart."""
             if cap is None:
                 return
             cp_v   = f"{cap['Cp']:.3f}"   if cap['Cp']  is not None else 'N/A'
@@ -952,6 +947,18 @@ if uploaded_file is not None:
                         fig, (ax1, ax2) = plt.subplots(
                             2, 1, figsize=(14, 8), gridspec_kw={'height_ratios': [2, 1]}
                         )
+                        
+                        # --- Y-AXIS PADDING FIX (TAB 3 - I-CHART) ---
+                        v_max, v_min = np.max(vals), np.min(vals)
+                        y_high, y_low = v_max, v_min
+                        if feat in GLOBAL_SPECS:
+                            s_min = GLOBAL_SPECS[feat].get('min')
+                            s_max = GLOBAL_SPECS[feat].get('max')
+                            if s_max is not None: y_high = max(y_high, s_max)
+                            if s_min is not None: y_low = min(y_low, s_min)
+                        y_pad = (y_high - y_low) * 0.15 if (y_high - y_low) != 0 else 1
+                        ax1.set_ylim(y_low - y_pad * 0.3, y_high + y_pad * 1.6)
+
                         ax1.plot(x_seq, vals, marker='o', ms=5, lw=1.5,
                                  color='#004C99', alpha=0.9, label=f"Value ({feat})")
                         ax1.axhline(mean_v, color='black', ls='--', lw=1.5,
@@ -986,6 +993,13 @@ if uploaded_file is not None:
                         mr = np.abs(np.diff(vals))
                         mr_mean = np.mean(mr)
                         ucl_mr = 3.267 * mr_mean
+                        
+                        # --- Y-AXIS PADDING FIX (TAB 3 - MR-CHART) ---
+                        mr_max = np.max(mr) if len(mr) > 0 else 0
+                        mr_high = max(mr_max, ucl_mr)
+                        mr_pad = mr_high * 0.15 if mr_high != 0 else 1
+                        ax2.set_ylim(-mr_pad * 0.2, mr_high + mr_pad * 1.5)
+                        
                         ax2.plot(x_seq[1:], mr, marker='o', ms=5, lw=1.5,
                                  color='#4B0082', alpha=0.9, label="Moving Range")
                         ax2.axhline(mr_mean, color='black', ls='--', lw=1.5,
@@ -1057,6 +1071,18 @@ if uploaded_file is not None:
                             fig, (ax1, ax2) = plt.subplots(
                                 2, 1, figsize=(12, 7), gridspec_kw={'height_ratios': [2, 1]}
                             )
+                            
+                            # --- Y-AXIS PADDING FIX (TAB 4 - I-CHART) ---
+                            v_max, v_min = np.max(vals), np.min(vals)
+                            y_high, y_low = v_max, v_min
+                            if feat in GLOBAL_SPECS:
+                                s_min = GLOBAL_SPECS[feat].get('min')
+                                s_max = GLOBAL_SPECS[feat].get('max')
+                                if s_max is not None: y_high = max(y_high, s_max)
+                                if s_min is not None: y_low = min(y_low, s_min)
+                            y_pad = (y_high - y_low) * 0.15 if (y_high - y_low) != 0 else 1
+                            ax1.set_ylim(y_low - y_pad * 0.3, y_high + y_pad * 1.6)
+
                             ax1.plot(x_seq, vals, marker='o', ms=5, lw=1.5,
                                      color='#004C99', alpha=0.9, label=feat)
                             ax1.axhline(mean_v, color='black', ls='--', lw=1.5, label='Mean')
@@ -1085,6 +1111,13 @@ if uploaded_file is not None:
                             mr = np.abs(np.diff(vals))
                             mr_mean = np.mean(mr)
                             ucl_mr = 3.267 * mr_mean
+                            
+                            # --- Y-AXIS PADDING FIX (TAB 4 - MR-CHART) ---
+                            mr_max = np.max(mr) if len(mr) > 0 else 0
+                            mr_high = max(mr_max, ucl_mr)
+                            mr_pad = mr_high * 0.15 if mr_high != 0 else 1
+                            ax2.set_ylim(-mr_pad * 0.2, mr_high + mr_pad * 1.5)
+                            
                             ax2.plot(x_seq[1:], mr, marker='o', ms=5, lw=1.5,
                                      color='#4B0082', alpha=0.9)
                             ax2.axhline(mr_mean, color='black', ls='--', lw=1.5)
@@ -1578,7 +1611,7 @@ if uploaded_file is not None:
                             "Feature": feat, 
                             "Method": method_name,
                             "Current Limit": spec_str_ov,
-                            "IQR Filter Boundary": filter_bound, # <--- NEW DISPLAY COLUMN
+                            "IQR Filter Boundary": filter_bound, 
                             "TARGET GOAL": int(round(m_val)),
                             "TOLERANCE": round(s_val, 2),
                             f"MILL RANGE {sigma_mill}σ": f"{mill_lower} - {int(round(m_val + sigma_mill*s_val))}",
@@ -1588,7 +1621,70 @@ if uploaded_file is not None:
         st.dataframe(pd.DataFrame(overall_export_data), use_container_width=True, hide_index=True)
 
         # ================================================================
-# --- I-MR CHARTS PLOTTING ---
+        # 2. LOCAL THICKNESS & I-MR CHARTS
+        # ================================================================
+        st.markdown("---")
+        st.subheader("🔍 Local Control Limits & I-MR Trending")
+        plot_data_dict = {}
+
+        thickness_list = sorted(df_filtered['Actual_Thickness'].dropna().unique())
+
+        for thick in thickness_list:
+            st.markdown(f"#### 📏 Thickness Category: **{thick}mm**")
+            df_t = df_filtered[df_filtered['Actual_Thickness'] == thick].sort_values(by='烤三生產日期')
+            plot_data_dict[thick] = {}
+            thick_status = []
+            
+            for feat in ['YS', 'TS', 'EL', 'YPE']:
+                if feat in df_t.columns:
+                    temp_calc = df_t[[feat, 'Valid_Qty', '烤三生產日期']].dropna(subset=[feat]).copy()
+                    temp_calc = temp_calc[temp_calc['Valid_Qty'] > 0]
+                
+                    low, high = spec_limits.get(feat, (None, None))
+                    spec_str = f"{int(low)}-{int(high)}" if pd.notnull(low) and pd.notnull(high) else (f">={int(low)}" if pd.notnull(low) else "N/A")
+
+                    if not temp_calc.empty:
+                        v, w = temp_calc[feat].values, temp_calc['Valid_Qty'].values
+                        w = np.where(pd.isna(w) | (w <= 0), 1, w).astype(int)
+                        
+                        (m_std, s_std), (m_iqr, s_iqr), (lower_iqr, upper_iqr) = calculate_stats(v, w, iqr_k)
+                        
+                        plot_data_dict[thick][feat] = {
+                            'values': v, 
+                            'mean_std': m_std, 'std_std': s_std,
+                            'mean_iqr': m_iqr, 'std_iqr': s_iqr
+                        }
+                        
+                        iqr_bound_str = f"{max(0, lower_iqr):.1f} - {upper_iqr:.1f}" if lower_iqr is not None else "N/A"
+                        
+                        methods_data = [
+                            ("Standard", m_std, s_std, "N/A"),
+                            (f"IQR (k={iqr_k})", m_iqr, s_iqr, iqr_bound_str)
+                        ]
+                        
+                        for method_name, m_val, s_val, filter_bound in methods_data:
+                            mill_lower = max(0, int(round(m_val - sigma_mill * s_val)))
+                            release_lower = max(0, int(round(m_val - sigma_release * s_val)))
+                            
+                            row = {
+                                "Feature": feat, 
+                                "Method": method_name,
+                                "Current Limit": spec_str,
+                                "IQR Filter Boundary": filter_bound,
+                                "TARGET GOAL": int(round(m_val)),
+                                "TOLERANCE": round(s_val, 2),
+                                f"MILL RANGE {sigma_mill}σ": f"{mill_lower} - {int(round(m_val + sigma_mill*s_val))}",
+                                f"RELEASE RANGE {sigma_release}σ": f"{release_lower} - {int(round(m_val + sigma_release*s_val))}"
+                            }
+                            thick_status.append(row)
+                            
+                            exp_row = row.copy()
+                            exp_row['Thickness'] = thick
+                            all_export_data.append(exp_row)
+
+            st.dataframe(pd.DataFrame(thick_status), use_container_width=True, hide_index=True)
+            
+            # --- I-MR CHARTS PLOTTING ---
             cols_imr = st.columns(2)
             top4 = [f for f in ['YS', 'TS', 'EL', 'YPE'] if f in plot_data_dict[thick]]
             
@@ -1612,14 +1708,12 @@ if uploaded_file is not None:
                         
                         v_max, v_min = np.max(v), np.min(v)
                         
-                        # ==========================================
-                        # FIX 1: DYNAMIC Y-AXIS PADDING FOR I-CHART
-                        # ==========================================
+                        # --- Y-AXIS PADDING FIX (TAB 6 - I-CHART) ---
                         y_high = max(v_max, ucl, mill_ucl)
                         y_low = min(v_min, lcl, mill_lcl)
                         y_pad = (y_high - y_low) * 0.15 if (y_high - y_low) != 0 else 1
-                        # Expand top limit by 25% to make room for the Legend
-                        ax1.set_ylim(y_low - y_pad * 0.5, y_high + y_pad * 1.8)
+                        # Expand top limit by 30-60% to make room for the Legend
+                        ax1.set_ylim(y_low - y_pad * 0.3, y_high + y_pad * 1.6)
                         
                         # I-Chart
                         ax1.plot(v, marker='o', color='#1f77b4', ms=4, lw=1, zorder=1)
@@ -1655,14 +1749,14 @@ if uploaded_file is not None:
                         ax1.set_title(f"I-Chart: {f} ({chart_method} | Mill: ±{sigma_mill}σ, Rel: ±{sigma_release}σ)", fontsize=11, fontweight='bold')
                         ax1.set_ylabel("Value")
                         
-                        # ==========================================
-                        # FIX 2: DYNAMIC Y-AXIS PADDING FOR MR-CHART
-                        # ==========================================
+                        # MR-Chart
                         mr = np.abs(np.diff(v))
                         mrm = np.mean(mr)
                         mru = 3.267 * mrm
+                        
                         mr_max = np.max(mr) if len(mr) > 0 else 0
                         
+                        # --- Y-AXIS PADDING FIX (TAB 6 - MR-CHART) ---
                         mr_high = max(mr_max, mru)
                         mr_pad = mr_high * 0.15 if mr_high != 0 else 1
                         ax2.set_ylim(-mr_pad * 0.2, mr_high + mr_pad * 1.5)
@@ -1693,7 +1787,6 @@ if uploaded_file is not None:
                         st.pyplot(fig)
                         plt.close(fig)
             st.markdown("---")
-            
 
         # ================================================================
         # EXPORT SECTION
