@@ -1503,7 +1503,7 @@ if uploaded_file is not None:
             "Establish statistical control limits based on actual production data.\n\n"
             "🛡️ **Mill Range:** Tighter internal limits for early warning.\n"
             "🚛 **Release Range:** Wider limits determining product acceptance.\n\n"
-            "🎯 **Data Filter:** Giới hạn thống kê và biểu đồ CHỈ ĐƯỢC TÍNH TOÁN dựa trên các cuộn thép đạt chất lượng từ **A-B- trở lên (A-B+, A-B, A-B-)**."
+            "🎯 **Data Filter:** Statistical limits and charts are calculated ONLY based on coils with a quality grade of **A-B or higher (A-B+, A-B)**."
         )
 
         # --- DYNAMIC CONTROLS ---
@@ -1525,10 +1525,11 @@ if uploaded_file is not None:
                        "YPE": (GLOBAL_SPECS.get('YPE', {}).get('min'), GLOBAL_SPECS.get('YPE', {}).get('max'))}
 
         # ================================================================
-        # BƯỚC CẬP NHẬT LOGIC: TẠO KHỐI LƯỢNG HỢP LỆ (TỪ A-B- TRỞ LÊN)
+        # LOGIC UPDATE: CREATE VALID QTY (A-B AND ABOVE)
         # ================================================================
-        target_grades = ['A-B+', 'A-B', 'A-B-']
-        # Đảm bảo các cột này tồn tại, nếu không có thì gán 0
+        target_grades = ['A-B+', 'A-B']
+        
+        # Ensure columns exist, if not set to 0
         for g in target_grades:
             if g not in df_filtered.columns:
                 df_filtered[g] = 0
@@ -1577,7 +1578,7 @@ if uploaded_file is not None:
         
         for feat in ['YS', 'TS', 'EL', 'YPE']:
             if feat in df_filtered.columns:
-                # THAY ĐỔI: Sử dụng Valid_Qty thay vì Total_Qty
+                # CHANGE: Use Valid_Qty instead of Total_Qty
                 df_ov = df_filtered[[feat, 'Valid_Qty']].dropna(subset=[feat]).copy()
                 df_ov = df_ov[df_ov['Valid_Qty'] > 0]
                 
@@ -1629,7 +1630,7 @@ if uploaded_file is not None:
             
             for feat in ['YS', 'TS', 'EL', 'YPE']:
                 if feat in df_t.columns:
-                    # THAY ĐỔI: Sử dụng Valid_Qty thay vì Total_Qty
+                    # CHANGE: Use Valid_Qty instead of Total_Qty
                     temp_calc = df_t[[feat, 'Valid_Qty', '烤三生產日期']].dropna(subset=[feat]).copy()
                     temp_calc = temp_calc[temp_calc['Valid_Qty'] > 0]
                 
@@ -1763,7 +1764,7 @@ if uploaded_file is not None:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
         except Exception as e:
-            st.warning(f"Could not generate Excel: {e}")   
+            st.warning(f"Could not generate Excel: {e}") 
     # ==========================================================
     # EXPORT PDF
     # ==========================================================
