@@ -1698,32 +1698,43 @@ if uploaded_file is not None:
                     if len(v) > 1:
                         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 7), gridspec_kw={'height_ratios': [2, 1]})
                         
-                        # Limits based on Release Range Sigma
+                        # Limits based on Release Range Sigma (Red)
                         ucl, lcl = mv + sigma_release*sv, max(0, mv - sigma_release*sv)
+                        # Limits based on Mill Range Sigma (Orange)
+                        mill_ucl, mill_lcl = mv + sigma_mill*sv, max(0, mv - sigma_mill*sv)
                         
                         # I-Chart
                         ax1.plot(v, marker='o', color='#1f77b4', ms=4, lw=1, zorder=1)
+                        
+                        # Highlight out of bounds (Release Range)
                         outs = np.where((v > ucl) | (v < lcl))[0]
                         if len(outs) > 0:
-                            ax1.scatter(outs, v[outs], color='red', s=60, zorder=2, label=f'Out of Control ({sigma_release}σ)')
+                            ax1.scatter(outs, v[outs], color='red', s=60, zorder=2, label=f'Out of Release ({sigma_release}σ)')
                             ax1.legend(loc='upper left', fontsize=8)
                         
+                        # Draw lines
                         ax1.axhline(mv, color='green', ls='--', lw=1.5)
                         ax1.axhline(ucl, color='red', ls='--', lw=1.2)
                         ax1.axhline(lcl, color='red', ls='--', lw=1.2)
+                        ax1.axhline(mill_ucl, color='#ff7f0e', ls=':', lw=1.5, alpha=0.9) # Mill Upper
+                        ax1.axhline(mill_lcl, color='#ff7f0e', ls=':', lw=1.5, alpha=0.9) # Mill Lower
                         
                         v_max, v_min = np.max(v), np.min(v)
                         ax1.axhline(v_max, color='gray', ls=':', lw=1, alpha=0.7)
                         ax1.axhline(v_min, color='gray', ls=':', lw=1, alpha=0.7)
                         
+                        # Add text labels on the right
                         trans1 = ax1.get_yaxis_transform()
                         ax1.text(1.02, mv, f"Mean: {mv:.1f}", color='green', transform=trans1, va='center', fontweight='bold')
                         ax1.text(1.02, ucl, f"UCL (+{sigma_release}σ): {ucl:.1f}", color='red', transform=trans1, va='center', fontweight='bold')
+                        ax1.text(1.02, mill_ucl, f"Mill (+{sigma_mill}σ): {mill_ucl:.1f}", color='#ff7f0e', transform=trans1, va='center', fontweight='bold')
+                        ax1.text(1.02, mill_lcl, f"Mill (-{sigma_mill}σ): {mill_lcl:.1f}", color='#ff7f0e', transform=trans1, va='center', fontweight='bold')
                         ax1.text(1.02, lcl, f"LCL (-{sigma_release}σ): {lcl:.1f}", color='red', transform=trans1, va='center', fontweight='bold')
                         ax1.text(1.02, v_max, f"Max: {v_max:.1f}", color='gray', transform=trans1, va='center')
                         ax1.text(1.02, v_min, f"Min: {v_min:.1f}", color='gray', transform=trans1, va='center')
 
-                        ax1.set_title(f"I-Chart: {f} ({chart_method} | Limits: ±{sigma_release}σ)", fontsize=11, fontweight='bold')
+                        # Update Title
+                        ax1.set_title(f"I-Chart: {f} ({chart_method} | Mill: ±{sigma_mill}σ, Rel: ±{sigma_release}σ)", fontsize=11, fontweight='bold')
                         ax1.set_ylabel("Value")
                         
                         # MR-Chart
@@ -1751,7 +1762,10 @@ if uploaded_file is not None:
                         ax2.set_ylabel("Range")
                         
                         fig.tight_layout()
-                        fig.subplots_adjust(right=0.85)
+                        
+                        # Adjust right margin to make room for the extra text labels
+                        fig.subplots_adjust(right=0.78)
+                        
                         st.pyplot(fig)
                         plt.close(fig)
             st.markdown("---")
