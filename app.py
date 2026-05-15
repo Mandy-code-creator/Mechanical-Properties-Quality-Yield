@@ -1026,7 +1026,8 @@ if uploaded_file is not None:
 
     # ==========================================================
   # ==========================================================
-    # TAB 4: I-MR Stability Tracking (Bản Clean 100%)
+    # ==========================================================
+    # TAB 4: I-MR Stability Tracking (Bản Clean - Đã Khóa Đồng Bộ Trục X)
     # ==========================================================
     with tab4:
         st.header("📈 Task 4: I-MR Stability Tracking (Chronological)")
@@ -1034,21 +1035,19 @@ if uploaded_file is not None:
         @st.fragment
         def render_tab4():
             # ==========================================
-            # CẤU HÌNH TÊN CỘT (BẠN SỬA Ở ĐÂY NẾU CẦN)
+            # CẤU HÌNH TÊN CỘT PHÂN LOẠI CHẤT LƯỢNG
             # ==========================================
-            # Nhập đúng tên cột phân loại A-B trong file Excel của bạn vào đây:
-            TEN_COT_PHAN_LOAI = 'Grade' # Ví dụ: '等級' hoặc 'Phân loại'
+            TEN_COT_PHAN_LOAI = 'Grade' # Sửa tên này cho khớp với file Excel của bạn
             
             df_t4 = df_filtered.copy()
 
-            # 1. XỬ LÝ NGÀY THÁNG CỰC KỲ AN TOÀN
+            # 1. XỬ LÝ NGÀY THÁNG
             if '烤三生產日期' in df_t4.columns:
-                # Chỉ lấy 8 số đầu tiên (YYYYMMDD) để tránh Pandas hiểu nhầm
                 date_clean = df_t4['烤三生產日期'].astype(str).str.replace(r'\D', '', regex=True).str[:8]
                 df_t4['烤三生產日期'] = pd.to_datetime(date_clean, format='%Y%m%d', errors='coerce')
                 df_t4 = df_t4.dropna(subset=['烤三生產日期'])
 
-            # 2. BỘ LỌC GIAO DIỆN
+            # 2. BỘ LỌC
             imr_periods = ["All Periods"] + sorted(df_t4['Time_Group'].dropna().unique().tolist())
             imr_thicks = sorted(df_t4['Actual_Thickness'].dropna().unique())
             imr_mats = sorted(df_t4['HR_Material'].astype(str).unique())
@@ -1066,7 +1065,7 @@ if uploaded_file is not None:
             imr_df = df_t4[mask].sort_values(by='烤三生產日期').reset_index(drop=True)
 
             if imr_df.empty:
-                st.warning("⚠️ Không tìm thấy dữ liệu cho tổ hợp Độ dày & Mác thép này. Vui lòng thử bộ lọc khác.")
+                st.warning("⚠️ Không tìm thấy dữ liệu cho tổ hợp Độ dày & Mác thép này.")
                 return
 
             st.info("Analysis based on production sequence. Daily Average applied. Red dots = Out of Spec.")
@@ -1081,19 +1080,16 @@ if uploaded_file is not None:
                     st.markdown(f"---")
                     st.markdown(f"### 🛡️ Stability: **{feat}**")
 
-                    # --- Tính Mean & Limit (Chỉ dựa trên cuộn đạt A-B trở lên) ---
                     limit_mean = None
                     limit_mr_mean = None
                     
                     if TEN_COT_PHAN_LOAI in feat_df.columns:
                         ab_mask = feat_df[TEN_COT_PHAN_LOAI].astype(str).str.contains('A|B', na=False, case=False)
                         ab_data = feat_df[ab_mask].groupby('烤三生產日期')[feat].mean()
-                        
                         if len(ab_data) > 1:
                             limit_mean = ab_data.mean()
                             limit_mr_mean = np.mean(np.abs(np.diff(ab_data.values)))
 
-                    # --- Gộp trung bình theo ngày cho toàn bộ dữ liệu để vẽ (xóa hàng ngang) ---
                     daily_data = feat_df.groupby('烤三生產日期', as_index=False)[feat].mean()
                     daily_data = daily_data.sort_values('烤三生產日期').reset_index(drop=True)
 
@@ -1101,7 +1097,6 @@ if uploaded_file is not None:
                     vals = daily_data[feat].values
                     x_seq = np.arange(len(vals))
 
-                    # Nếu không có cuộn A-B nào, dùng tạm Mean của toàn bộ lô
                     if limit_mean is None: limit_mean = np.mean(vals)
                     if limit_mr_mean is None: limit_mr_mean = np.mean(np.abs(np.diff(vals))) if len(vals) > 1 else 0
 
@@ -1110,7 +1105,12 @@ if uploaded_file is not None:
                     # --- VẼ HÌNH ---
                     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), gridspec_kw={'height_ratios': [2, 1]})
 
+                    # ĐÂY LÀ CHÌA KHÓA: KHÓA CỨNG TRỤC X CHO CẢ 2 BIỂU ĐỒ TỪ -0.5 ĐẾN (N-0.5)
+                    TRUC_X_LIMIT = (-0.5, len(vals) - 0.5)
+
                     # ============ I-CHART ============
+                    ax1.set_xlim(TRUC_X_LIMIT) # Đồng bộ trục ngang
+                    
                     v_max, v_min = np.max(vals), np.min(vals)
                     y_high, y_low = v_max, v_min
                     
@@ -1135,7 +1135,6 @@ if uploaded_file is not None:
                         if out_idx:
                             ax1.scatter(out_idx, vals[out_idx], color='red', s=80, zorder=5)
 
-                    # Vạch kẻ năm 2025 | 2026
                     for i in range(1, len(dates)):
                         if dates.iloc[i].year != dates.iloc[i-1].year:
                             ax1.axvline(i, color='gray', ls=':', alpha=0.6)
@@ -1146,6 +1145,8 @@ if uploaded_file is not None:
                     ax1.set_xticks([])
 
                     # ============ MR-CHART ============
+                    ax2.set_xlim(TRUC_X_LIMIT) # Đồng bộ trục ngang khớp y chang biểu đồ trên
+                    
                     mr_vals = np.abs(np.diff(vals)) if len(vals) > 1 else np.array([])
                     
                     if len(mr_vals) > 0:
@@ -1153,12 +1154,14 @@ if uploaded_file is not None:
                         mr_pad = mr_high * 0.15 if mr_high != 0 else 1
                         ax2.set_ylim(-mr_pad * 0.2, mr_high + mr_pad * 1.5)
                         
+                        # MR Chart luôn bắt đầu từ x=1
                         ax2.plot(x_seq[1:], mr_vals, marker='o', ms=5, lw=1.5, color='#4B0082', alpha=0.9)
                         ax2.axhline(limit_mr_mean, color='black', ls='--', lw=1.5)
                         ax2.axhline(ucl_mr, color='red', ls=':', lw=1.5, label=f'UCL: {ucl_mr:.1f}')
                         
                         mr_err_idx = np.where(mr_vals > ucl_mr)[0]
                         if len(mr_err_idx) > 0:
+                            # Cộng 1 để map đúng vị trí x
                             ax2.scatter(mr_err_idx + 1, mr_vals[mr_err_idx], color='red', s=50, zorder=5)
 
                     ax2.set_title("Moving Range Chart (MR)", fontweight='bold')
