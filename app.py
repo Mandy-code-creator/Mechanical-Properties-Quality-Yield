@@ -1027,30 +1027,32 @@ if uploaded_file is not None:
     # ==========================================================
   # ==========================================================
 # ==========================================================
+    # ==========================================================
     # TAB 4: I-MR CHART
     # ==========================================================
     with tab4:
         st.header("📈 Task 4: I-MR Stability Tracking (Chronological)")
 
-        # Tự động cập nhật số năm dựa trên dữ liệu thực tế đang có
-        if not df_filtered.empty and '烤三生產日期' in df_filtered.columns:
-            temp_dates = pd.to_datetime(df_filtered['烤三生產日期'], errors='coerce').dropna()
-            if not temp_dates.empty:
-                min_y, max_y = temp_dates.dt.year.min(), temp_dates.dt.year.max()
+        @st.fragment
+        def render_tab4():
+            # --- 1. SỬA LỖI ĐỊNH DẠNG NGÀY THÁNG YYYYMMDD ---
+            # Ép kiểu về string, xóa khoảng trắng thừa và dịch chính xác theo format %Y%m%d
+            df_filtered['烤三生產日期'] = pd.to_datetime(
+                df_filtered['烤三生產日期'].astype(str).str.strip(), 
+                format='%Y%m%d', 
+                errors='coerce'
+            )
+
+            # Cập nhật thông báo linh động theo năm thực tế có trong dữ liệu
+            valid_dates = df_filtered['烤三生產日期'].dropna()
+            if not valid_dates.empty:
+                min_y, max_y = valid_dates.dt.year.min(), valid_dates.dt.year.max()
                 st.info(f"Analysis based on production sequence from {min_y} to {max_y}. Red dots = Out of Spec.")
             else:
                 st.info("Analysis based on production sequence. Red dots = Out of Spec.")
-        else:
-            st.info("Analysis based on production sequence. Red dots = Out of Spec.")
 
-        @st.fragment
-        def render_tab4():
-            # 1. Ép kiểu dữ liệu ngày tháng để Pandas sắp xếp 2026 chuẩn xác
-            df_filtered['烤三生產日期'] = pd.to_datetime(df_filtered['烤三生產日期'], errors='coerce')
-
-            imr_periods = ["All Periods"] + sorted(
-                df_filtered['Time_Group'].dropna().unique().tolist()
-            )
+            # --- 2. TẠO BỘ LỌC ---
+            imr_periods = ["All Periods"] + sorted(df_filtered['Time_Group'].dropna().unique().tolist())
             imr_thicks = sorted(df_filtered['Actual_Thickness'].dropna().unique())
             imr_mats = sorted(df_filtered['HR_Material'].astype(str).unique())
             
@@ -1059,7 +1061,7 @@ if uploaded_file is not None:
             sel_t = c2.selectbox("Filter Thickness:", imr_thicks, key="t4_t")
             sel_m = c3.selectbox("Filter Material:", imr_mats, key="t4_m")
 
-            # 2. Lọc dữ liệu theo lựa chọn UI
+            # --- 3. LỌC DỮ LIỆU ---
             if sel_p == "All Periods":
                 imr_df = df_filtered[
                     (df_filtered['Actual_Thickness'] == sel_t) &
@@ -1072,14 +1074,16 @@ if uploaded_file is not None:
                     (df_filtered['HR_Material'] == sel_m)
                 ]
 
-            # 3. Loại bỏ dòng rỗng ngày tháng và sắp xếp theo trình tự thời gian
+            # Bỏ các dòng không có ngày tháng và sắp xếp theo thời gian tăng dần
             imr_df = imr_df.dropna(subset=['烤三生產日期']).sort_values(by='烤三生產日期').reset_index(drop=True)
 
+            # --- 4. VẼ BIỂU ĐỒ ---
             if not imr_df.empty:
                 for feat in ['YS', 'TS', 'EL', 'YPE']:
                     if feat in imr_df.columns:
                         valid_data = imr_df.dropna(subset=[feat, '烤三生產日期']).copy()
                         if len(valid_data) > 1:
+                            st.markdown(f"---")
                             st.markdown(f"### 🛡️ Stability: **{feat}**")
                             valid_data = valid_data.reset_index(drop=True)
                             
@@ -1087,7 +1091,7 @@ if uploaded_file is not None:
                             vals = valid_data[feat].values
                             x_seq = np.arange(len(vals))
                             
-                            # Tính toán giới hạn (Limits) - Ưu tiên lấy cuộn đạt Grade A-B trở lên nếu có cột đánh giá
+                            # Tính Mean: Chú trọng lấy dữ liệu từ cuộn Grade A-B trở lên
                             if 'Grade' in valid_data.columns:
                                 valid_limit_mask = valid_data['Grade'].astype(str).str.contains('A|B', na=False)
                                 mean_v = np.mean(valid_data.loc[valid_limit_mask, feat].values) if valid_limit_mask.any() else np.mean(vals)
@@ -1098,7 +1102,7 @@ if uploaded_file is not None:
                                 2, 1, figsize=(12, 7), gridspec_kw={'height_ratios': [2, 1]}
                             )
                             
-                            # --- Y-AXIS PADDING FIX (TAB 4 - I-CHART) ---
+                            # ---------------- I-CHART ----------------
                             v_max, v_min = np.max(vals), np.min(vals)
                             y_high, y_low = v_max, v_min
                             
@@ -1116,10 +1120,9 @@ if uploaded_file is not None:
                             
                             if feat in GLOBAL_SPECS:
                                 s = GLOBAL_SPECS[feat]
-                                if s.get('min'):
-                                    ax1.axhline(s['min'], color='red', lw=2)
-                                if s.get('max'):
-                                    ax1.axhline(s['max'], color='red', lw=2)
+                                if s.get('min'): ax1.axhline(s['min'], color='red', lw=2)
+                                if s.get('max'): ax1.axhline(s['max'], color='red', lw=2)
+                                
                                 v_x, v_y = [], []
                                 for i, v in enumerate(vals):
                                     if (s.get('min') and v < s['min']) or (s.get('max') and v > s['max']):
@@ -1131,16 +1134,16 @@ if uploaded_file is not None:
                                 for i in range(1, len(dates)):
                                     if dates.iloc[i].year != dates.iloc[i - 1].year:
                                         ax1.axvline(i, color='gray', ls=':', alpha=0.5)
-                                        ax1.text(i, ax1.get_ylim()[1], f" {dates.iloc[i].year}", fontsize=10, va='top')
+                                        ax1.text(i, ax1.get_ylim()[1], f" {dates.iloc[i].year}", fontsize=10, va='top', fontweight='bold')
                                         
                             ax1.set_title(f"Individual Chart (I) - {feat}", fontweight='bold')
                             ax1.legend(loc='upper right', fontsize=8)
                             ax1.set_xticks([])
 
-                            # --- MR-CHART ---
+                            # ---------------- MR-CHART ----------------
                             mr = np.abs(np.diff(vals))
                             
-                            # Tính MR Mean chuẩn dựa trên Grade (nếu có)
+                            # Tính MR Mean và UCL chuẩn theo Grade A-B
                             if 'Grade' in valid_data.columns and valid_limit_mask.any():
                                 mr_limit = np.abs(np.diff(valid_data.loc[valid_limit_mask, feat].values))
                                 mr_mean = np.mean(mr_limit) if len(mr_limit) > 0 else np.mean(mr)
@@ -1149,7 +1152,6 @@ if uploaded_file is not None:
                                 
                             ucl_mr = 3.267 * mr_mean
                             
-                            # --- Y-AXIS PADDING FIX (TAB 4 - MR-CHART) ---
                             mr_max = np.max(mr) if len(mr) > 0 else 0
                             mr_high = max(mr_max, ucl_mr)
                             mr_pad = mr_high * 0.15 if mr_high != 0 else 1
@@ -1177,7 +1179,7 @@ if uploaded_file is not None:
                             st.pyplot(fig)
                             plt.close(fig)
             else:
-                st.warning("No data found for the selected combination.")
+                st.warning("⚠️ Không tìm thấy dữ liệu cho sự kết hợp Độ dày & Mác thép này sau khi lọc.")
 
         render_tab4()
     # ==========================================================
