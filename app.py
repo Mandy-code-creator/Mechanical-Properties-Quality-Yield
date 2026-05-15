@@ -1026,8 +1026,6 @@ if uploaded_file is not None:
 
     # ==========================================================
   # ==========================================================
-# ==========================================================
-    # ==========================================================
     # TAB 4: I-MR CHART
     # ==========================================================
     with tab4:
@@ -1035,23 +1033,7 @@ if uploaded_file is not None:
 
         @st.fragment
         def render_tab4():
-            # --- 1. SỬA LỖI ĐỊNH DẠNG NGÀY THÁNG YYYYMMDD ---
-            # Ép kiểu về string, xóa khoảng trắng thừa và dịch chính xác theo format %Y%m%d
-            df_filtered['烤三生產日期'] = pd.to_datetime(
-                df_filtered['烤三生產日期'].astype(str).str.strip(), 
-                format='%Y%m%d', 
-                errors='coerce'
-            )
-
-            # Cập nhật thông báo linh động theo năm thực tế có trong dữ liệu
-            valid_dates = df_filtered['烤三生產日期'].dropna()
-            if not valid_dates.empty:
-                min_y, max_y = valid_dates.dt.year.min(), valid_dates.dt.year.max()
-                st.info(f"Analysis based on production sequence from {min_y} to {max_y}. Red dots = Out of Spec.")
-            else:
-                st.info("Analysis based on production sequence. Red dots = Out of Spec.")
-
-            # --- 2. TẠO BỘ LỌC ---
+            # 1. TẠO BỘ LỌC TỪ DỮ LIỆU GỐC
             imr_periods = ["All Periods"] + sorted(df_filtered['Time_Group'].dropna().unique().tolist())
             imr_thicks = sorted(df_filtered['Actual_Thickness'].dropna().unique())
             imr_mats = sorted(df_filtered['HR_Material'].astype(str).unique())
@@ -1061,23 +1043,36 @@ if uploaded_file is not None:
             sel_t = c2.selectbox("Filter Thickness:", imr_thicks, key="t4_t")
             sel_m = c3.selectbox("Filter Material:", imr_mats, key="t4_m")
 
-            # --- 3. LỌC DỮ LIỆU ---
+            # 2. LỌC DỮ LIỆU (THÊM .COPY() ĐỂ BẢO TOÀN DỮ LIỆU GỐC)
             if sel_p == "All Periods":
                 imr_df = df_filtered[
                     (df_filtered['Actual_Thickness'] == sel_t) &
                     (df_filtered['HR_Material'] == sel_m)
-                ].drop_duplicates(subset=['Row_ID'])
+                ].drop_duplicates(subset=['Row_ID']).copy()
             else:
                 imr_df = df_filtered[
                     (df_filtered['Time_Group'] == sel_p) &
                     (df_filtered['Actual_Thickness'] == sel_t) &
                     (df_filtered['HR_Material'] == sel_m)
-                ]
+                ].copy()
 
-            # Bỏ các dòng không có ngày tháng và sắp xếp theo thời gian tăng dần
-            imr_df = imr_df.dropna(subset=['烤三生產日期']).sort_values(by='烤三生產日期').reset_index(drop=True)
+            # 3. ÉP KIỂU NGÀY THÁNG "CHỐNG LỖI"
+            if not imr_df.empty and '烤三生產日期' in imr_df.columns:
+                # Loại bỏ mọi ký tự thừa (dấu gạch ngang, dấu cách), chỉ lấy đúng 8 số đầu tiên để dịch
+                date_str = imr_df['烤三生產日期'].astype(str).str.replace(r'\D', '', regex=True).str[:8]
+                imr_df['烤三生產日期'] = pd.to_datetime(date_str, format='%Y%m%d', errors='coerce')
+                
+                # Lọc bỏ dòng không có ngày và sắp xếp
+                imr_df = imr_df.dropna(subset=['烤三生產日期']).sort_values(by='烤三生產日期').reset_index(drop=True)
+                
+                # Cập nhật thông báo Label
+                if not imr_df.empty:
+                    min_y, max_y = imr_df['烤三生產日期'].dt.year.min(), imr_df['烤三生產日期'].dt.year.max()
+                    st.info(f"Analysis based on production sequence from {min_y} to {max_y}. Red dots = Out of Spec.")
+                else:
+                    st.info("Analysis based on production sequence. Red dots = Out of Spec.")
 
-            # --- 4. VẼ BIỂU ĐỒ ---
+            # 4. VẼ BIỂU ĐỒ
             if not imr_df.empty:
                 for feat in ['YS', 'TS', 'EL', 'YPE']:
                     if feat in imr_df.columns:
@@ -1091,7 +1086,7 @@ if uploaded_file is not None:
                             vals = valid_data[feat].values
                             x_seq = np.arange(len(vals))
                             
-                            # Tính Mean: Chú trọng lấy dữ liệu từ cuộn Grade A-B trở lên
+                            # Tính Mean: Ưu tiên cuộn Grade A-B trở lên theo yêu cầu của Sếp
                             if 'Grade' in valid_data.columns:
                                 valid_limit_mask = valid_data['Grade'].astype(str).str.contains('A|B', na=False)
                                 mean_v = np.mean(valid_data.loc[valid_limit_mask, feat].values) if valid_limit_mask.any() else np.mean(vals)
@@ -1143,7 +1138,7 @@ if uploaded_file is not None:
                             # ---------------- MR-CHART ----------------
                             mr = np.abs(np.diff(vals))
                             
-                            # Tính MR Mean và UCL chuẩn theo Grade A-B
+                            # Tính MR Mean và UCL chuẩn
                             if 'Grade' in valid_data.columns and valid_limit_mask.any():
                                 mr_limit = np.abs(np.diff(valid_data.loc[valid_limit_mask, feat].values))
                                 mr_mean = np.mean(mr_limit) if len(mr_limit) > 0 else np.mean(mr)
@@ -1179,7 +1174,7 @@ if uploaded_file is not None:
                             st.pyplot(fig)
                             plt.close(fig)
             else:
-                st.warning("⚠️ 經過篩選，找不到該鋼材厚度和等級組合的數據。")
+                st.warning("⚠️ Không tìm thấy dữ liệu cho sự kết hợp Độ dày & Mác thép này sau khi lọc.")
 
         render_tab4()
     # ==========================================================
