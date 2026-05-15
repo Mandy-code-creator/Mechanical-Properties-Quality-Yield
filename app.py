@@ -1026,165 +1026,121 @@ if uploaded_file is not None:
 
     # ==========================================================
   # ==========================================================
-   # ==========================================================
-    # TAB 4: I-MR Stability Tracking (Theo từng Cuộn - Coil by Coil)
+   # TAB 4: I-MR CHART
     # ==========================================================
     with tab4:
         st.header("📈 Task 4: I-MR Stability Tracking (Chronological)")
+        st.info("Analysis based on production sequence from 2024 to 2026. Red dots = Out of Spec.")
 
         @st.fragment
         def render_tab4():
-            # ==========================================
-            # CẤU HÌNH TÊN CỘT DỮ LIỆU
-            # ==========================================
-            TEN_COT_PHAN_LOAI = 'Grade'    # Đổi thành tên cột đánh giá A-B (ví dụ: '等級')
-            TEN_COT_CUON = '鋼捲號碼'       # Tên cột chứa Mã số cuộn thép
-            
-            df_t4 = df_filtered.copy()
-
-            # 1. XỬ LÝ NGÀY THÁNG
-            if '烤三生產日期' in df_t4.columns:
-                date_clean = df_t4['烤三生產日期'].astype(str).str.replace(r'\D', '', regex=True).str[:8]
-                df_t4['烤三生產日期'] = pd.to_datetime(date_clean, format='%Y%m%d', errors='coerce')
-                df_t4 = df_t4.dropna(subset=['烤三生產日期'])
-
-            # 2. BỘ LỌC
-            imr_periods = ["All Periods"] + sorted(df_t4['Time_Group'].dropna().unique().tolist())
-            imr_thicks = sorted(df_t4['Actual_Thickness'].dropna().unique())
-            imr_mats = sorted(df_t4['HR_Material'].astype(str).unique())
-            
+            imr_periods = ["All Periods"] + sorted(
+                df_filtered['Time_Group'].dropna().unique().tolist()
+            )
+            imr_thicks = sorted(df_filtered['Actual_Thickness'].dropna().unique())
+            imr_mats = sorted(df_filtered['HR_Material'].astype(str).unique())
             c1, c2, c3 = st.columns(3)
             sel_p = c1.selectbox("Filter Period:", imr_periods, key="t4_p")
             sel_t = c2.selectbox("Filter Thickness:", imr_thicks, key="t4_t")
             sel_m = c3.selectbox("Filter Material:", imr_mats, key="t4_m")
 
-            # 3. LỌC DỮ LIỆU
-            mask = (df_t4['Actual_Thickness'] == sel_t) & (df_t4['HR_Material'] == sel_m)
-            if sel_p != "All Periods":
-                mask &= (df_t4['Time_Group'] == sel_p)
-            
-            imr_df = df_t4[mask].sort_values(by='烤三生產日期').reset_index(drop=True)
+            if sel_p == "All Periods":
+                imr_df = df_filtered[
+                    (df_filtered['Actual_Thickness'] == sel_t) &
+                    (df_filtered['HR_Material'] == sel_m)
+                ].drop_duplicates(subset=['Row_ID'])
+            else:
+                imr_df = df_filtered[
+                    (df_filtered['Time_Group'] == sel_p) &
+                    (df_filtered['Actual_Thickness'] == sel_t) &
+                    (df_filtered['HR_Material'] == sel_m)
+                ]
+            imr_df = imr_df.sort_values(by='烤三生產日期').reset_index(drop=True)
 
-            if imr_df.empty:
-                st.warning("⚠️ Không tìm thấy dữ liệu cho tổ hợp Độ dày & Mác thép này.")
-                return
+            if not imr_df.empty:
+                for feat in ['YS', 'TS', 'EL', 'YPE']:
+                    if feat in imr_df.columns:
+                        valid_data = imr_df.dropna(subset=[feat, '烤三生產日期']).copy()
+                        if len(valid_data) > 1:
+                            st.markdown(f"### 🛡️ Stability: **{feat}**")
+                            valid_data = valid_data.reset_index(drop=True)
+                            dates = valid_data['烤三生產日期']
+                            vals = valid_data[feat].values
+                            x_seq = np.arange(len(vals))
+                            mean_v = np.mean(vals)
 
-            st.info("Phân tích theo từng Cuộn (Coil-by-Coil). Các cuộn lặp lại đã được gộp trung bình.")
+                            fig, (ax1, ax2) = plt.subplots(
+                                2, 1, figsize=(12, 7), gridspec_kw={'height_ratios': [2, 1]}
+                            )
+                            
+                            # --- Y-AXIS PADDING FIX (TAB 4 - I-CHART) ---
+                            v_max, v_min = np.max(vals), np.min(vals)
+                            y_high, y_low = v_max, v_min
+                            if feat in GLOBAL_SPECS:
+                                s_min = GLOBAL_SPECS[feat].get('min')
+                                s_max = GLOBAL_SPECS[feat].get('max')
+                                if s_max is not None: y_high = max(y_high, s_max)
+                                if s_min is not None: y_low = min(y_low, s_min)
+                            y_pad = (y_high - y_low) * 0.15 if (y_high - y_low) != 0 else 1
+                            ax1.set_ylim(y_low - y_pad * 0.3, y_high + y_pad * 1.6)
 
-            # 4. TÍNH TOÁN & VẼ BIỂU ĐỒ
-            for feat in ['YS', 'TS', 'EL', 'YPE']:
-                if feat in imr_df.columns and TEN_COT_CUON in imr_df.columns:
-                    feat_df = imr_df.dropna(subset=[feat, '烤三生產日期', TEN_COT_CUON]).copy()
-                    if len(feat_df) < 2:
-                        continue
-                    
-                    st.markdown(f"---")
-                    st.markdown(f"### 🛡️ Stability: **{feat}**")
+                            ax1.plot(x_seq, vals, marker='o', ms=5, lw=1.5,
+                                     color='#004C99', alpha=0.9, label=feat)
+                            ax1.axhline(mean_v, color='black', ls='--', lw=1.5, label='Mean')
+                            if feat in GLOBAL_SPECS:
+                                s = GLOBAL_SPECS[feat]
+                                if s['min']:
+                                    ax1.axhline(s['min'], color='red', lw=2)
+                                if s['max']:
+                                    ax1.axhline(s['max'], color='red', lw=2)
+                                v_x, v_y = [], []
+                                for i, v in enumerate(vals):
+                                    if (s['min'] and v < s['min']) or (s['max'] and v > s['max']):
+                                        v_x.append(i); v_y.append(v)
+                                if v_x:
+                                    ax1.scatter(v_x, v_y, color='red', s=60, zorder=5)
+                            if sel_p == "All Periods":
+                                for i in range(1, len(dates)):
+                                    if dates.iloc[i].year != dates.iloc[i - 1].year:
+                                        ax1.axvline(i, color='gray', ls=':', alpha=0.5)
+                                        ax1.text(i, ax1.get_ylim()[1],
+                                                 f" {dates.iloc[i].year}", fontsize=10, va='top')
+                            ax1.set_title(f"Individual Chart (I) - {feat}", fontweight='bold')
+                            ax1.legend(loc='upper right', fontsize=8)
+                            ax1.set_xticks([])
 
-                    # --- GỘP THEO TỪNG CUỘN VÀ GIỮ NGUYÊN TRÌNH TỰ THỜI GIAN ---
-                    agg_dict = {
-                        feat: 'mean',           # Lấy trung bình cơ tính nếu cuộn bị lặp 2 lần
-                        '烤三生產日期': 'min'   # Lấy ngày sản xuất đầu tiên của cuộn để sắp xếp
-                    }
-                    if TEN_COT_PHAN_LOAI in feat_df.columns:
-                        agg_dict[TEN_COT_PHAN_LOAI] = 'first' # Giữ lại Grade để tính Limit
-                        
-                    coil_data = feat_df.groupby(TEN_COT_CUON, as_index=False).agg(agg_dict)
-                    
-                    # Sắp xếp lại dữ liệu theo thời gian để đảm bảo biểu đồ MR chạy đúng trình tự
-                    coil_data = coil_data.sort_values('烤三生產日期').reset_index(drop=True)
-
-                    # Trích xuất các biến để vẽ
-                    dates = coil_data['烤三生產日期']
-                    coil_ids = coil_data[TEN_COT_CUON]  # <-- Trục X bây giờ là Mã số cuộn
-                    vals = coil_data[feat].values
-                    x_seq = np.arange(len(vals))
-
-                    # --- TÍNH TOÁN GIỚI HẠN (UƯ TIÊN GRADE A-B TRỞ LÊN) ---
-                    limit_mean = None
-                    limit_mr_mean = None
-                    
-                    if TEN_COT_PHAN_LOAI in coil_data.columns:
-                        ab_mask = coil_data[TEN_COT_PHAN_LOAI].astype(str).str.contains('A|B', na=False, case=False)
-                        ab_vals = coil_data.loc[ab_mask, feat].values
-                        
-                        if len(ab_vals) > 1:
-                            limit_mean = np.mean(ab_vals)
-                            limit_mr_mean = np.mean(np.abs(np.diff(ab_vals)))
-
-                    if limit_mean is None: limit_mean = np.mean(vals)
-                    if limit_mr_mean is None: limit_mr_mean = np.mean(np.abs(np.diff(vals))) if len(vals) > 1 else 0
-
-                    ucl_mr = 3.267 * limit_mr_mean
-
-                    # --- VẼ HÌNH ---
-                    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), gridspec_kw={'height_ratios': [2, 1]})
-                    TRUC_X_LIMIT = (-0.5, len(vals) - 0.5)
-
-                    # ============ I-CHART ============
-                    ax1.set_xlim(TRUC_X_LIMIT)
-                    
-                    v_max, v_min = np.max(vals), np.min(vals)
-                    y_high, y_low = v_max, v_min
-                    
-                    if feat in GLOBAL_SPECS:
-                        s_min = GLOBAL_SPECS[feat].get('min')
-                        s_max = GLOBAL_SPECS[feat].get('max')
-                        if s_max is not None: y_high = max(y_high, s_max)
-                        if s_min is not None: y_low = min(y_low, s_min)
-                        
-                    y_pad = (y_high - y_low) * 0.15 if (y_high - y_low) != 0 else 1
-                    ax1.set_ylim(y_low - y_pad * 0.3, y_high + y_pad * 1.6)
-
-                    ax1.plot(x_seq, vals, marker='o', ms=5, lw=1.5, color='#004C99', alpha=0.9, label=feat)
-                    ax1.axhline(limit_mean, color='black', ls='--', lw=1.5, label=f'Mean: {limit_mean:.1f}')
-                    
-                    if feat in GLOBAL_SPECS:
-                        s = GLOBAL_SPECS[feat]
-                        if s.get('min'): ax1.axhline(s['min'], color='red', lw=1.5)
-                        if s.get('max'): ax1.axhline(s['max'], color='red', lw=1.5)
-                        
-                        out_idx = [i for i, v in enumerate(vals) if (s.get('min') and v < s['min']) or (s.get('max') and v > s['max'])]
-                        if out_idx:
-                            ax1.scatter(out_idx, vals[out_idx], color='red', s=80, zorder=5)
-
-                    for i in range(1, len(dates)):
-                        if dates.iloc[i].year != dates.iloc[i-1].year:
-                            ax1.axvline(i, color='gray', ls=':', alpha=0.6)
-                            ax1.text(i, ax1.get_ylim()[1], f" {dates.iloc[i].year}", fontsize=10, va='top', fontweight='bold')
-
-                    ax1.set_title(f"Individual Chart (I) - {feat}", fontweight='bold')
-                    ax1.legend(loc='upper right', fontsize=8)
-                    ax1.set_xticks([])
-
-                    # ============ MR-CHART ============
-                    ax2.set_xlim(TRUC_X_LIMIT)
-                    
-                    mr_vals = np.abs(np.diff(vals)) if len(vals) > 1 else np.array([])
-                    
-                    if len(mr_vals) > 0:
-                        mr_high = max(np.max(mr_vals), ucl_mr)
-                        mr_pad = mr_high * 0.15 if mr_high != 0 else 1
-                        ax2.set_ylim(-mr_pad * 0.2, mr_high + mr_pad * 1.5)
-                        
-                        ax2.plot(x_seq[1:], mr_vals, marker='o', ms=5, lw=1.5, color='#4B0082', alpha=0.9)
-                        ax2.axhline(limit_mr_mean, color='black', ls='--', lw=1.5)
-                        ax2.axhline(ucl_mr, color='red', ls=':', lw=1.5, label=f'UCL: {ucl_mr:.1f}')
-                        
-                        mr_err_idx = np.where(mr_vals > ucl_mr)[0]
-                        if len(mr_err_idx) > 0:
-                            ax2.scatter(mr_err_idx + 1, mr_vals[mr_err_idx], color='red', s=50, zorder=5)
-
-                    ax2.set_title("Moving Range Chart (MR)", fontweight='bold')
-                    
-                    # --- ĐỔI TRỤC X THÀNH MÃ SỐ CUỘN ---
-                    step = max(1, len(x_seq) // 15) # Tự động giãn cách chữ để không bị đè lên nhau
-                    ax2.set_xticks(x_seq[::step])
-                    ax2.set_xticklabels(coil_ids.iloc[::step], rotation=45, ha='right', fontsize=9)
-
-                    fig.tight_layout()
-                    st.pyplot(fig)
-                    plt.close(fig)
+                            mr = np.abs(np.diff(vals))
+                            mr_mean = np.mean(mr)
+                            ucl_mr = 3.267 * mr_mean
+                            
+                            # --- Y-AXIS PADDING FIX (TAB 4 - MR-CHART) ---
+                            mr_max = np.max(mr) if len(mr) > 0 else 0
+                            mr_high = max(mr_max, ucl_mr)
+                            mr_pad = mr_high * 0.15 if mr_high != 0 else 1
+                            ax2.set_ylim(-mr_pad * 0.2, mr_high + mr_pad * 1.5)
+                            
+                            ax2.plot(x_seq[1:], mr, marker='o', ms=5, lw=1.5,
+                                     color='#4B0082', alpha=0.9)
+                            ax2.axhline(mr_mean, color='black', ls='--', lw=1.5)
+                            ax2.axhline(ucl_mr, color='red', ls=':', lw=1.5)
+                            hv_x, hv_y = [], []
+                            for i, m_val in enumerate(mr):
+                                if m_val > ucl_mr:
+                                    hv_x.append(i + 1); hv_y.append(m_val)
+                            if hv_x:
+                                ax2.scatter(hv_x, hv_y, color='red', s=40, zorder=5)
+                            ax2.set_title("Moving Range Chart (MR)", fontweight='bold')
+                            step = max(1, len(x_seq) // 12)
+                            ax2.set_xticks(x_seq[::step])
+                            ax2.set_xticklabels(
+                                dates.dt.strftime('%Y-%m-%d').iloc[::step], rotation=45, ha='right'
+                            )
+                            fig.tight_layout()
+                            plt.savefig(f"export_imr_{feat}.png", bbox_inches='tight', dpi=150)
+                            st.pyplot(fig)
+                            plt.close(fig)
+            else:
+                st.warning("No data found for the selected combination.")
 
         render_tab4()
     # ==========================================================
