@@ -1179,7 +1179,7 @@ if uploaded_file is not None:
                             st.pyplot(fig)
                             plt.close(fig)
             else:
-                st.warning("⚠️ Không tìm thấy dữ liệu cho sự kết hợp Độ dày & Mác thép này sau khi lọc.")
+                st.warning("⚠️ 經過篩選，找不到該鋼材厚度和等級組合的數據。")
 
         render_tab4()
     # ==========================================================
