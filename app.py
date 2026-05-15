@@ -1025,123 +1025,117 @@ if uploaded_file is not None:
                         plt.close(fig)
 
     # ==========================================================
-    # TAB 4: I-MR CHART
-    # ==========================================================
-    with tab4:
-        st.header("📈 Task 4: I-MR Stability Tracking (Chronological)")
-        st.info("Analysis based on production sequence from 2024 to 2026. Red dots = Out of Spec.")
+  # ==========================================================
+# TAB 4: I-MR CHART (Bản cập nhật hỗ trợ dữ liệu 2026+)
+# ==========================================================
+with tab4:
+    st.header("📈 Task 4: I-MR Stability Tracking (Chronological)")
+    
+    # Dòng thông báo tự động cập nhật năm theo dữ liệu thực tế
+    if not df_filtered.empty:
+        min_y = df_filtered['烤三生產日期'].dt.year.min()
+        max_y = df_filtered['烤三生產日期'].dt.year.max()
+        st.info(f"Phân tích trình tự sản xuất từ {min_y} đến {max_y}. Dấu chấm đỏ = Out of Spec.")
 
-        @st.fragment
-        def render_tab4():
-            imr_periods = ["All Periods"] + sorted(
-                df_filtered['Time_Group'].dropna().unique().tolist()
-            )
-            imr_thicks = sorted(df_filtered['Actual_Thickness'].dropna().unique())
-            imr_mats = sorted(df_filtered['HR_Material'].astype(str).unique())
-            c1, c2, c3 = st.columns(3)
-            sel_p = c1.selectbox("Filter Period:", imr_periods, key="t4_p")
-            sel_t = c2.selectbox("Filter Thickness:", imr_thicks, key="t4_t")
-            sel_m = c3.selectbox("Filter Material:", imr_mats, key="t4_m")
+    @st.fragment
+    def render_tab4():
+        # --- 1. CHUẨN BỊ BỘ LỌC ---
+        imr_periods = ["All Periods"] + sorted(
+            df_filtered['Time_Group'].dropna().unique().tolist()
+        )
+        imr_thicks = sorted(df_filtered['Actual_Thickness'].dropna().unique())
+        imr_mats = sorted(df_filtered['HR_Material'].astype(str).unique())
 
-            if sel_p == "All Periods":
-                imr_df = df_filtered[
-                    (df_filtered['Actual_Thickness'] == sel_t) &
-                    (df_filtered['HR_Material'] == sel_m)
-                ].drop_duplicates(subset=['Row_ID'])
-            else:
-                imr_df = df_filtered[
-                    (df_filtered['Time_Group'] == sel_p) &
-                    (df_filtered['Actual_Thickness'] == sel_t) &
-                    (df_filtered['HR_Material'] == sel_m)
-                ]
-            imr_df = imr_df.sort_values(by='烤三生產日期').reset_index(drop=True)
+        c1, c2, c3 = st.columns(3)
+        sel_p = c1.selectbox("Chọn Giai đoạn:", imr_periods, key="t4_p")
+        sel_t = c2.selectbox("Chọn Độ dày:", imr_thicks, key="t4_t")
+        sel_m = c3.selectbox("Chọn Mác thép:", imr_mats, key="t4_m")
 
-            if not imr_df.empty:
-                for feat in ['YS', 'TS', 'EL', 'YPE']:
-                    if feat in imr_df.columns:
-                        valid_data = imr_df.dropna(subset=[feat, '烤三生產日期']).copy()
-                        if len(valid_data) > 1:
-                            st.markdown(f"### 🛡️ Stability: **{feat}**")
-                            valid_data = valid_data.reset_index(drop=True)
-                            dates = valid_data['烤三生產日期']
-                            vals = valid_data[feat].values
-                            x_seq = np.arange(len(vals))
-                            mean_v = np.mean(vals)
+        # --- 2. LỌC DỮ LIỆU ---
+        if sel_p == "All Periods":
+            imr_df = df_filtered[
+                (df_filtered['Actual_Thickness'] == sel_t) &
+                (df_filtered['HR_Material'] == sel_m)
+            ].drop_duplicates(subset=['Row_ID'])
+        else:
+            imr_df = df_filtered[
+                (df_filtered['Time_Group'] == sel_p) &
+                (df_filtered['Actual_Thickness'] == sel_t) &
+                (df_filtered['HR_Material'] == sel_m)
+            ]
 
-                            fig, (ax1, ax2) = plt.subplots(
-                                2, 1, figsize=(12, 7), gridspec_kw={'height_ratios': [2, 1]}
-                            )
-                            
-                            # --- Y-AXIS PADDING FIX (TAB 4 - I-CHART) ---
-                            v_max, v_min = np.max(vals), np.min(vals)
-                            y_high, y_low = v_max, v_min
-                            if feat in GLOBAL_SPECS:
-                                s_min = GLOBAL_SPECS[feat].get('min')
-                                s_max = GLOBAL_SPECS[feat].get('max')
-                                if s_max is not None: y_high = max(y_high, s_max)
-                                if s_min is not None: y_low = min(y_low, s_min)
-                            y_pad = (y_high - y_low) * 0.15 if (y_high - y_low) != 0 else 1
-                            ax1.set_ylim(y_low - y_pad * 0.3, y_high + y_pad * 1.6)
+        # QUAN TRỌNG: Sắp xếp theo ngày tháng để 2026 nằm sau 2025
+        imr_df['烤三生產日期'] = pd.to_datetime(imr_df['烤三生產日期'])
+        imr_df = imr_df.sort_values(by='烤三生產日期').reset_index(drop=True)
 
-                            ax1.plot(x_seq, vals, marker='o', ms=5, lw=1.5,
-                                     color='#004C99', alpha=0.9, label=feat)
-                            ax1.axhline(mean_v, color='black', ls='--', lw=1.5, label='Mean')
-                            if feat in GLOBAL_SPECS:
-                                s = GLOBAL_SPECS[feat]
-                                if s['min']:
-                                    ax1.axhline(s['min'], color='red', lw=2)
-                                if s['max']:
-                                    ax1.axhline(s['max'], color='red', lw=2)
-                                v_x, v_y = [], []
-                                for i, v in enumerate(vals):
-                                    if (s['min'] and v < s['min']) or (s['max'] and v > s['max']):
-                                        v_x.append(i); v_y.append(v)
-                                if v_x:
-                                    ax1.scatter(v_x, v_y, color='red', s=60, zorder=5)
-                            if sel_p == "All Periods":
-                                for i in range(1, len(dates)):
-                                    if dates.iloc[i].year != dates.iloc[i - 1].year:
-                                        ax1.axvline(i, color='gray', ls=':', alpha=0.5)
-                                        ax1.text(i, ax1.get_ylim()[1],
-                                                 f" {dates.iloc[i].year}", fontsize=10, va='top')
-                            ax1.set_title(f"Individual Chart (I) - {feat}", fontweight='bold')
-                            ax1.legend(loc='upper right', fontsize=8)
-                            ax1.set_xticks([])
+        # --- 3. KIỂM TRA DỮ LIỆU TRƯỚC KHI VẼ ---
+        if imr_df.empty:
+            st.warning(f"⚠️ Không có dữ liệu cho Thickness {sel_t} và Material {sel_m}. Thử kiểm tra bộ lọc tổng ở Sidebar.")
+            return
 
-                            mr = np.abs(np.diff(vals))
-                            mr_mean = np.mean(mr)
-                            ucl_mr = 3.267 * mr_mean
-                            
-                            # --- Y-AXIS PADDING FIX (TAB 4 - MR-CHART) ---
-                            mr_max = np.max(mr) if len(mr) > 0 else 0
-                            mr_high = max(mr_max, ucl_mr)
-                            mr_pad = mr_high * 0.15 if mr_high != 0 else 1
-                            ax2.set_ylim(-mr_pad * 0.2, mr_high + mr_pad * 1.5)
-                            
-                            ax2.plot(x_seq[1:], mr, marker='o', ms=5, lw=1.5,
-                                     color='#4B0082', alpha=0.9)
-                            ax2.axhline(mr_mean, color='black', ls='--', lw=1.5)
-                            ax2.axhline(ucl_mr, color='red', ls=':', lw=1.5)
-                            hv_x, hv_y = [], []
-                            for i, m_val in enumerate(mr):
-                                if m_val > ucl_mr:
-                                    hv_x.append(i + 1); hv_y.append(m_val)
-                            if hv_x:
-                                ax2.scatter(hv_x, hv_y, color='red', s=40, zorder=5)
-                            ax2.set_title("Moving Range Chart (MR)", fontweight='bold')
-                            step = max(1, len(x_seq) // 12)
-                            ax2.set_xticks(x_seq[::step])
-                            ax2.set_xticklabels(
-                                dates.dt.strftime('%Y-%m-%d').iloc[::step], rotation=45, ha='right'
-                            )
-                            fig.tight_layout()
-                            plt.savefig(f"export_imr_{feat}.png", bbox_inches='tight', dpi=150)
-                            st.pyplot(fig)
-                            plt.close(fig)
-            else:
-                st.warning("No data found for the selected combination.")
+        # Hiển thị thống kê nhanh để debug
+        found_2026 = imr_df[imr_df['烤三生產日期'].dt.year == 2026]
+        if not found_2026.empty:
+            st.success(f"✅ Đã tìm thấy {len(found_2026)} dòng dữ liệu của năm 2026.")
+        else:
+            st.error("❌ Cảnh báo: Không tìm thấy dòng nào thuộc năm 2026 trong lựa chọn này.")
 
-        render_tab4()
+        # --- 4. VẼ BIỂU ĐỒ ---
+        for feat in ['YS', 'TS', 'EL', 'YPE']:
+            if feat in imr_df.columns:
+                valid_data = imr_df.dropna(subset=[feat, '烤三生產日期']).copy()
+                if len(valid_data) > 1:
+                    st.markdown(f"### 🛡️ Chỉ số: **{feat}**")
+                    
+                    dates = valid_data['烤三生產日期']
+                    vals = valid_data[feat].values
+                    x_seq = np.arange(len(vals))
+                    mean_v = np.mean(vals)
+
+                    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 7), gridspec_kw={'height_ratios': [2, 1]})
+                    
+                    # --- I-CHART ---
+                    ax1.plot(x_seq, vals, marker='o', ms=4, lw=1, color='#004C99', label=feat)
+                    ax1.axhline(mean_v, color='black', ls='--', alpha=0.7)
+                    
+                    # Vẽ Spec Limits
+                    if feat in GLOBAL_SPECS:
+                        s = GLOBAL_SPECS[feat]
+                        if s.get('min'): ax1.axhline(s['min'], color='red', lw=1.5, ls='-')
+                        if s.get('max'): ax1.axhline(s['max'], color='red', lw=1.5, ls='-')
+                        
+                        # Điểm lỗi
+                        err_idx = [i for i, v in enumerate(vals) if (s.get('min') and v < s['min']) or (s.get('max') and v > s['max'])]
+                        ax1.scatter(err_idx, vals[err_idx], color='red', s=50, zorder=5)
+
+                    # Vạch chia năm (Để thấy rõ ranh giới 2025 | 2026)
+                    for i in range(1, len(dates)):
+                        if dates.iloc[i].year != dates.iloc[i - 1].year:
+                            ax1.axvline(i, color='green', ls='--', alpha=0.5)
+                            ax1.text(i, ax1.get_ylim()[1], f" Năm {dates.iloc[i].year}", color='green', fontweight='bold')
+
+                    ax1.set_title(f"I-Chart: {feat}")
+                    ax1.set_xticks([])
+
+                    # --- MR-CHART ---
+                    mr = np.abs(np.diff(vals))
+                    mr_mean = np.mean(mr)
+                    ucl_mr = 3.267 * mr_mean
+                    
+                    ax2.plot(x_seq[1:], mr, marker='o', ms=4, lw=1, color='#4B0082')
+                    ax2.axhline(mr_mean, color='black', ls='--')
+                    ax2.axhline(ucl_mr, color='red', ls=':')
+                    
+                    # Cấu hình trục X (Ngày tháng)
+                    step = max(1, len(x_seq) // 12)
+                    ax2.set_xticks(x_seq[::step])
+                    ax2.set_xticklabels(dates.dt.strftime('%d/%m/%y').iloc[::step], rotation=45)
+                    
+                    fig.tight_layout()
+                    st.pyplot(fig)
+                    plt.close(fig)
+
+    render_tab4()
 
     # ==========================================================
     # --- TAB 5: TAIL SCRAP ANALYSIS (COIL-ID AWARE) ---
