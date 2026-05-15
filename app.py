@@ -1026,6 +1026,7 @@ if uploaded_file is not None:
 
     # ==========================================================
   # ==========================================================
+    # ==========================================================
     # TAB 4: I-MR CHART
     # ==========================================================
     with tab4:
@@ -1043,7 +1044,7 @@ if uploaded_file is not None:
             sel_t = c2.selectbox("Filter Thickness:", imr_thicks, key="t4_t")
             sel_m = c3.selectbox("Filter Material:", imr_mats, key="t4_m")
 
-            # 2. LỌC DỮ LIỆU (THÊM .COPY() ĐỂ BẢO TOÀN DỮ LIỆU GỐC)
+            # 2. LỌC DỮ LIỆU BẢO TOÀN GỐC
             if sel_p == "All Periods":
                 imr_df = df_filtered[
                     (df_filtered['Actual_Thickness'] == sel_t) &
@@ -1056,42 +1057,54 @@ if uploaded_file is not None:
                     (df_filtered['HR_Material'] == sel_m)
                 ].copy()
 
-            # 3. ÉP KIỂU NGÀY THÁNG "CHỐNG LỖI"
+            # 3. ÉP KIỂU NGÀY THÁNG "CHỐNG LỖI" ĐỊNH DẠNG HỖN HỢP
             if not imr_df.empty and '烤三生產日期' in imr_df.columns:
-                # Loại bỏ mọi ký tự thừa (dấu gạch ngang, dấu cách), chỉ lấy đúng 8 số đầu tiên để dịch
                 date_str = imr_df['烤三生產日期'].astype(str).str.replace(r'\D', '', regex=True).str[:8]
                 imr_df['烤三生產日期'] = pd.to_datetime(date_str, format='%Y%m%d', errors='coerce')
                 
-                # Lọc bỏ dòng không có ngày và sắp xếp
                 imr_df = imr_df.dropna(subset=['烤三生產日期']).sort_values(by='烤三生產日期').reset_index(drop=True)
                 
-                # Cập nhật thông báo Label
                 if not imr_df.empty:
                     min_y, max_y = imr_df['烤三生產日期'].dt.year.min(), imr_df['烤三生產日期'].dt.year.max()
-                    st.info(f"Analysis based on production sequence from {min_y} to {max_y}. Red dots = Out of Spec.")
+                    st.info(f"Analysis based on production sequence from {min_y} to {max_y}. Daily Average applied. Red dots = Out of Spec.")
                 else:
                     st.info("Analysis based on production sequence. Red dots = Out of Spec.")
 
-            # 4. VẼ BIỂU ĐỒ
+            # 4. VẼ BIỂU ĐỒ (GỘP TRUNG BÌNH THEO NGÀY)
             if not imr_df.empty:
                 for feat in ['YS', 'TS', 'EL', 'YPE']:
                     if feat in imr_df.columns:
-                        valid_data = imr_df.dropna(subset=[feat, '烤三生產日期']).copy()
-                        if len(valid_data) > 1:
+                        valid_data_raw = imr_df.dropna(subset=[feat, '烤三生產日期']).copy()
+                        
+                        if len(valid_data_raw) > 1:
                             st.markdown(f"---")
-                            st.markdown(f"### 🛡️ Stability: **{feat}**")
-                            valid_data = valid_data.reset_index(drop=True)
+                            st.markdown(f"### 🛡️ Stability: **{feat}** (Daily Average)")
+                            
+                            # Gộp trung bình theo ngày để loại bỏ hiện tượng đi ngang (flatline)
+                            valid_data = valid_data_raw.groupby('烤三生產日期', as_index=False).agg({feat: 'mean'})
+                            valid_data = valid_data.sort_values('烤三生產日期').reset_index(drop=True)
                             
                             dates = valid_data['烤三生產日期']
                             vals = valid_data[feat].values
                             x_seq = np.arange(len(vals))
                             
-                            # Tính Mean: Ưu tiên cuộn Grade A-B trở lên theo yêu cầu của Sếp
-                            if 'Grade' in valid_data.columns:
-                                valid_limit_mask = valid_data['Grade'].astype(str).str.contains('A|B', na=False)
-                                mean_v = np.mean(valid_data.loc[valid_limit_mask, feat].values) if valid_limit_mask.any() else np.mean(vals)
+                            # TÍNH TOÁN GIỚI HẠN (CHỈ DÙNG CUỘN ĐẠT GRADE A-B)
+                            if 'Grade' in valid_data_raw.columns:
+                                df_ab = valid_data_raw[valid_data_raw['Grade'].astype(str).str.contains('A|B', na=False)]
+                                df_ab_grouped = df_ab.groupby('烤三生產日期', as_index=False).agg({feat: 'mean'})
+                                
+                                if len(df_ab_grouped) > 1:
+                                    mean_v = np.mean(df_ab_grouped[feat].values)
+                                    mr_mean = np.mean(np.abs(np.diff(df_ab_grouped[feat].values)))
+                                elif len(df_ab_grouped) == 1:
+                                    mean_v = np.mean(df_ab_grouped[feat].values)
+                                    mr_mean = np.mean(np.abs(np.diff(vals))) if len(vals) > 1 else 0
+                                else:
+                                    mean_v = np.mean(vals)
+                                    mr_mean = np.mean(np.abs(np.diff(vals))) if len(vals) > 1 else 0
                             else:
                                 mean_v = np.mean(vals)
+                                mr_mean = np.mean(np.abs(np.diff(vals))) if len(vals) > 1 else 0
 
                             fig, (ax1, ax2) = plt.subplots(
                                 2, 1, figsize=(12, 7), gridspec_kw={'height_ratios': [2, 1]}
@@ -1110,8 +1123,8 @@ if uploaded_file is not None:
                             y_pad = (y_high - y_low) * 0.15 if (y_high - y_low) != 0 else 1
                             ax1.set_ylim(y_low - y_pad * 0.3, y_high + y_pad * 1.6)
 
-                            ax1.plot(x_seq, vals, marker='o', ms=5, lw=1.5, color='#004C99', alpha=0.9, label=feat)
-                            ax1.axhline(mean_v, color='black', ls='--', lw=1.5, label='Mean')
+                            ax1.plot(x_seq, vals, marker='o', ms=5, lw=1.5, color='#004C99', alpha=0.9, label=f'{feat} (Avg)')
+                            ax1.axhline(mean_v, color='black', ls='--', lw=1.5, label='Mean (Grade A-B)')
                             
                             if feat in GLOBAL_SPECS:
                                 s = GLOBAL_SPECS[feat]
@@ -1136,33 +1149,26 @@ if uploaded_file is not None:
                             ax1.set_xticks([])
 
                             # ---------------- MR-CHART ----------------
-                            mr = np.abs(np.diff(vals))
-                            
-                            # Tính MR Mean và UCL chuẩn
-                            if 'Grade' in valid_data.columns and valid_limit_mask.any():
-                                mr_limit = np.abs(np.diff(valid_data.loc[valid_limit_mask, feat].values))
-                                mr_mean = np.mean(mr_limit) if len(mr_limit) > 0 else np.mean(mr)
-                            else:
-                                mr_mean = np.mean(mr)
-                                
+                            mr = np.abs(np.diff(vals)) if len(vals) > 1 else np.array([])
                             ucl_mr = 3.267 * mr_mean
                             
-                            mr_max = np.max(mr) if len(mr) > 0 else 0
-                            mr_high = max(mr_max, ucl_mr)
-                            mr_pad = mr_high * 0.15 if mr_high != 0 else 1
-                            ax2.set_ylim(-mr_pad * 0.2, mr_high + mr_pad * 1.5)
-                            
-                            ax2.plot(x_seq[1:], mr, marker='o', ms=5, lw=1.5, color='#4B0082', alpha=0.9)
-                            ax2.axhline(mr_mean, color='black', ls='--', lw=1.5)
-                            ax2.axhline(ucl_mr, color='red', ls=':', lw=1.5)
-                            
-                            hv_x, hv_y = [], []
-                            for i, m_val in enumerate(mr):
-                                if m_val > ucl_mr:
-                                    hv_x.append(i + 1); hv_y.append(m_val)
-                            if hv_x:
-                                ax2.scatter(hv_x, hv_y, color='red', s=40, zorder=5)
+                            if len(mr) > 0:
+                                mr_max = np.max(mr)
+                                mr_high = max(mr_max, ucl_mr)
+                                mr_pad = mr_high * 0.15 if mr_high != 0 else 1
+                                ax2.set_ylim(-mr_pad * 0.2, mr_high + mr_pad * 1.5)
                                 
+                                ax2.plot(x_seq[1:], mr, marker='o', ms=5, lw=1.5, color='#4B0082', alpha=0.9)
+                                ax2.axhline(mr_mean, color='black', ls='--', lw=1.5)
+                                ax2.axhline(ucl_mr, color='red', ls=':', lw=1.5)
+                                
+                                hv_x, hv_y = [], []
+                                for i, m_val in enumerate(mr):
+                                    if m_val > ucl_mr:
+                                        hv_x.append(i + 1); hv_y.append(m_val)
+                                if hv_x:
+                                    ax2.scatter(hv_x, hv_y, color='red', s=40, zorder=5)
+                                    
                             ax2.set_title("Moving Range Chart (MR)", fontweight='bold')
                             step = max(1, len(x_seq) // 12)
                             ax2.set_xticks(x_seq[::step])
