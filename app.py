@@ -1026,8 +1026,8 @@ if uploaded_file is not None:
 
     # ==========================================================
   # ==========================================================
-    # ==========================================================
-    # TAB 4: I-MR Stability Tracking (Bản Clean - Đã Khóa Đồng Bộ Trục X)
+   # ==========================================================
+    # TAB 4: I-MR Stability Tracking (Theo từng Cuộn - Coil by Coil)
     # ==========================================================
     with tab4:
         st.header("📈 Task 4: I-MR Stability Tracking (Chronological)")
@@ -1035,9 +1035,10 @@ if uploaded_file is not None:
         @st.fragment
         def render_tab4():
             # ==========================================
-            # CẤU HÌNH TÊN CỘT PHÂN LOẠI CHẤT LƯỢNG
+            # CẤU HÌNH TÊN CỘT DỮ LIỆU
             # ==========================================
-            TEN_COT_PHAN_LOAI = 'Grade' # Sửa tên này cho khớp với file Excel của bạn
+            TEN_COT_PHAN_LOAI = 'Grade'    # Đổi thành tên cột đánh giá A-B (ví dụ: '等級')
+            TEN_COT_CUON = '鋼捲號碼'       # Tên cột chứa Mã số cuộn thép
             
             df_t4 = df_filtered.copy()
 
@@ -1068,34 +1069,48 @@ if uploaded_file is not None:
                 st.warning("⚠️ Không tìm thấy dữ liệu cho tổ hợp Độ dày & Mác thép này.")
                 return
 
-            st.info("Analysis based on production sequence. Daily Average applied. Red dots = Out of Spec.")
+            st.info("Phân tích theo từng Cuộn (Coil-by-Coil). Các cuộn lặp lại đã được gộp trung bình.")
 
             # 4. TÍNH TOÁN & VẼ BIỂU ĐỒ
             for feat in ['YS', 'TS', 'EL', 'YPE']:
-                if feat in imr_df.columns:
-                    feat_df = imr_df.dropna(subset=[feat, '烤三生產日期']).copy()
+                if feat in imr_df.columns and TEN_COT_CUON in imr_df.columns:
+                    feat_df = imr_df.dropna(subset=[feat, '烤三生產日期', TEN_COT_CUON]).copy()
                     if len(feat_df) < 2:
                         continue
                     
                     st.markdown(f"---")
                     st.markdown(f"### 🛡️ Stability: **{feat}**")
 
+                    # --- GỘP THEO TỪNG CUỘN VÀ GIỮ NGUYÊN TRÌNH TỰ THỜI GIAN ---
+                    agg_dict = {
+                        feat: 'mean',           # Lấy trung bình cơ tính nếu cuộn bị lặp 2 lần
+                        '烤三生產日期': 'min'   # Lấy ngày sản xuất đầu tiên của cuộn để sắp xếp
+                    }
+                    if TEN_COT_PHAN_LOAI in feat_df.columns:
+                        agg_dict[TEN_COT_PHAN_LOAI] = 'first' # Giữ lại Grade để tính Limit
+                        
+                    coil_data = feat_df.groupby(TEN_COT_CUON, as_index=False).agg(agg_dict)
+                    
+                    # Sắp xếp lại dữ liệu theo thời gian để đảm bảo biểu đồ MR chạy đúng trình tự
+                    coil_data = coil_data.sort_values('烤三生產日期').reset_index(drop=True)
+
+                    # Trích xuất các biến để vẽ
+                    dates = coil_data['烤三生產日期']
+                    coil_ids = coil_data[TEN_COT_CUON]  # <-- Trục X bây giờ là Mã số cuộn
+                    vals = coil_data[feat].values
+                    x_seq = np.arange(len(vals))
+
+                    # --- TÍNH TOÁN GIỚI HẠN (UƯ TIÊN GRADE A-B TRỞ LÊN) ---
                     limit_mean = None
                     limit_mr_mean = None
                     
-                    if TEN_COT_PHAN_LOAI in feat_df.columns:
-                        ab_mask = feat_df[TEN_COT_PHAN_LOAI].astype(str).str.contains('A|B', na=False, case=False)
-                        ab_data = feat_df[ab_mask].groupby('烤三生產日期')[feat].mean()
-                        if len(ab_data) > 1:
-                            limit_mean = ab_data.mean()
-                            limit_mr_mean = np.mean(np.abs(np.diff(ab_data.values)))
-
-                    daily_data = feat_df.groupby('烤三生產日期', as_index=False)[feat].mean()
-                    daily_data = daily_data.sort_values('烤三生產日期').reset_index(drop=True)
-
-                    dates = daily_data['烤三生產日期']
-                    vals = daily_data[feat].values
-                    x_seq = np.arange(len(vals))
+                    if TEN_COT_PHAN_LOAI in coil_data.columns:
+                        ab_mask = coil_data[TEN_COT_PHAN_LOAI].astype(str).str.contains('A|B', na=False, case=False)
+                        ab_vals = coil_data.loc[ab_mask, feat].values
+                        
+                        if len(ab_vals) > 1:
+                            limit_mean = np.mean(ab_vals)
+                            limit_mr_mean = np.mean(np.abs(np.diff(ab_vals)))
 
                     if limit_mean is None: limit_mean = np.mean(vals)
                     if limit_mr_mean is None: limit_mr_mean = np.mean(np.abs(np.diff(vals))) if len(vals) > 1 else 0
@@ -1104,12 +1119,10 @@ if uploaded_file is not None:
 
                     # --- VẼ HÌNH ---
                     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), gridspec_kw={'height_ratios': [2, 1]})
-
-                    # ĐÂY LÀ CHÌA KHÓA: KHÓA CỨNG TRỤC X CHO CẢ 2 BIỂU ĐỒ TỪ -0.5 ĐẾN (N-0.5)
                     TRUC_X_LIMIT = (-0.5, len(vals) - 0.5)
 
                     # ============ I-CHART ============
-                    ax1.set_xlim(TRUC_X_LIMIT) # Đồng bộ trục ngang
+                    ax1.set_xlim(TRUC_X_LIMIT)
                     
                     v_max, v_min = np.max(vals), np.min(vals)
                     y_high, y_low = v_max, v_min
@@ -1145,7 +1158,7 @@ if uploaded_file is not None:
                     ax1.set_xticks([])
 
                     # ============ MR-CHART ============
-                    ax2.set_xlim(TRUC_X_LIMIT) # Đồng bộ trục ngang khớp y chang biểu đồ trên
+                    ax2.set_xlim(TRUC_X_LIMIT)
                     
                     mr_vals = np.abs(np.diff(vals)) if len(vals) > 1 else np.array([])
                     
@@ -1154,20 +1167,20 @@ if uploaded_file is not None:
                         mr_pad = mr_high * 0.15 if mr_high != 0 else 1
                         ax2.set_ylim(-mr_pad * 0.2, mr_high + mr_pad * 1.5)
                         
-                        # MR Chart luôn bắt đầu từ x=1
                         ax2.plot(x_seq[1:], mr_vals, marker='o', ms=5, lw=1.5, color='#4B0082', alpha=0.9)
                         ax2.axhline(limit_mr_mean, color='black', ls='--', lw=1.5)
                         ax2.axhline(ucl_mr, color='red', ls=':', lw=1.5, label=f'UCL: {ucl_mr:.1f}')
                         
                         mr_err_idx = np.where(mr_vals > ucl_mr)[0]
                         if len(mr_err_idx) > 0:
-                            # Cộng 1 để map đúng vị trí x
                             ax2.scatter(mr_err_idx + 1, mr_vals[mr_err_idx], color='red', s=50, zorder=5)
 
                     ax2.set_title("Moving Range Chart (MR)", fontweight='bold')
-                    step = max(1, len(x_seq) // 12)
+                    
+                    # --- ĐỔI TRỤC X THÀNH MÃ SỐ CUỘN ---
+                    step = max(1, len(x_seq) // 15) # Tự động giãn cách chữ để không bị đè lên nhau
                     ax2.set_xticks(x_seq[::step])
-                    ax2.set_xticklabels(dates.dt.strftime('%Y-%m-%d').iloc[::step], rotation=45, ha='right')
+                    ax2.set_xticklabels(coil_ids.iloc[::step], rotation=45, ha='right', fontsize=9)
 
                     fig.tight_layout()
                     st.pyplot(fig)
